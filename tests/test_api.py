@@ -1,4 +1,5 @@
 import io
+import json
 import math
 import struct
 import wave
@@ -13,6 +14,10 @@ def client(tmp_path_factory, monkeypatch_module):
     monkeypatch_module.setenv("VOICE_MODEL_ENABLED", "false")
     monkeypatch_module.setenv("TRANSCRIPTION_ENABLED", "false")
     monkeypatch_module.setenv("LLM_ENABLED", "false")
+    monkeypatch_module.setenv("MMS_ENABLED", "false")
+    # Tests must not depend on the developer's real .env.
+    for key in ("ANTHROPIC_API_KEY", "GEMINI_API_KEY", "GOOGLE_API_KEY"):
+        monkeypatch_module.setenv(key, "")
     from app.config import get_settings
 
     get_settings.cache_clear()
@@ -50,10 +55,66 @@ def test_health(client):
     assert client.get("/health").json() == {"status": "ok"}
 
 
-def test_capabilities(client):
+def test_capabilities_lists_all_11_languages(client):
     caps = client.get("/api/v1/capabilities").json()
     assert caps["voice_analysis"]["available"] is True
-    assert "zu" in caps["languages"]
+    codes = {lang["code"] for lang in caps["languages"]}
+    assert codes == {"en", "af", "zu", "xh", "nso", "ts", "st", "tn", "ss", "ve", "nr"}
+    assert all(lang["voice_clone_check"] for lang in caps["languages"])
+
+
+@pytest.mark.parametrize("text", [
+    "Ma, dis my nuwe nommer. My foon is gesteel. Stuur asseblief dringend geld, R2000",  # af
+    "Mama, le yinombolo yami entsha. Ngicela ungithumelele imali ngokushesha",  # zu
+    "Mama, yinombolo yam entsha le. Ndithumelele imali ngokukhawuleza",  # xh
+])
+def test_offline_rules_catch_scams_in_other_languages(client, text):
+    body = client.post("/api/v1/messages/analyze", json={"text": text}).json()
+    assert body["risk_level"] in ("medium", "high", "critical"), body
+    assert body["scam_type"] == "family_impersonation"
+
+
+def test_plain_family_greeting_is_not_flagged(client):
+    body = client.post("/api/v1/messages/analyze", json={"text": "Hi Mom, I'll be home late tonight"}).json()
+    assert body["risk_level"] == "safe"
+
+
+def test_results_are_translated_with_claude(client, monkeypatch):
+    """Fake Claude so we can check the multilingual flow without an API key or network."""
+    from app.services import llm
+
+    calls = []
+
+    async def fake_call(content, model, system, max_tokens):
+        calls.append(model.__name__)
+        if model is llm.LLMVerdict:
+            return llm.LLMVerdict(
+                detected_language="zu", risk_score=90, scam_type="family_impersonation",
+                headline="ZU headline", summary="ZU summary",
+                red_flags=[llm.RedFlag(title="ZU flag", detail="ZU detail", severity="high")],
+                advice=["ZU advice"], extracted_text="",
+            )
+        strings = json.loads(content[0]["text"].split(":\n", 1)[1])
+        return llm.Translation(translations=[f"[zu] {s}" for s in strings])
+
+    monkeypatch.setattr(llm, "llm_available", lambda: True)
+    monkeypatch.setattr(llm, "_structured_call", fake_call)
+    monkeypatch.setattr("app.services.localize.llm_available", lambda: True)
+    llm._translation_cache.clear()
+
+    body = client.post("/api/v1/messages/analyze", json={
+        "text": "Mama, le yinombolo yami entsha. Ngicela ungithumelele imali ngokushesha", "language": "auto",
+    }).json()
+    assert body["detected_language"] == "zu"
+    assert body["language"] == "zu"
+    assert body["headline"] == "ZU headline"  # written by Claude, not re-translated
+    rule_titles = [i["title"] for i in body["indicators"] if i["source"] == "rules"]
+    assert rule_titles and all(t.startswith("[zu] ") for t in rule_titles)
+    assert body["disclaimer"].startswith("[zu] ")
+
+    number = client.get("/api/v1/numbers/lookup", params={"number": "0710000001", "language": "zu"}).json()
+    assert number["language"] == "zu" and number["headline"].startswith("[zu] ")
+    llm._translation_cache.clear()
 
 
 def test_family_scam_message_is_high_risk(client):

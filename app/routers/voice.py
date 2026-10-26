@@ -13,7 +13,8 @@ router = APIRouter(prefix="/api/v1/voice", tags=["voice"])
 @router.post("/analyze", response_model=VoiceAnalysisResponse)
 async def analyze_voice(
     file: UploadFile = File(..., description="Recording or voice note: webm, ogg/opus, m4a, mp3 or wav."),
-    language: str = Form("en"),
+    language: str = Form("en", description="App language for the result (en, af, zu, xh, nso, ts, st, tn, ss, ve, nr)."),
+    audio_language: str | None = Form(None, description="Language spoken in the recording; defaults to `language`."),
     unknown_number: bool = Form(False),
     asked_for_money: bool = Form(False),
     urgent_pressure: bool = Form(False),
@@ -35,6 +36,6 @@ async def analyze_voice(
         claims_to_be=claims_to_be,
     )
     try:
-        return await analyse_voice(data, context=context, language=language)
+        return await analyse_voice(data, context=context, language=language, audio_language=audio_language)
     except AudioDecodeError as exc:
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, str(exc)) from exc

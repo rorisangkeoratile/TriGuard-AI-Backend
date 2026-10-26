@@ -7,6 +7,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app import db
 from app.config import get_settings
+from app.languages import LANGUAGES
 from app.routers import messages, numbers, voice
 from app.services import llm, voice_detector
 
@@ -53,6 +54,7 @@ def health() -> dict:
 def capabilities() -> dict:
     """Tells the PWA which features are live so it can hide or label anything unavailable."""
     models = voice_detector.status()
+    llm_ready = llm.llm_available()
     return {
         "voice_analysis": {
             "available": True,
@@ -62,11 +64,24 @@ def capabilities() -> dict:
             "max_seconds": settings.max_audio_seconds,
             "errors": models["errors"],
         },
-        "message_analysis": {"available": True, "ai_explanations": llm.llm_available()},
-        "screenshot_analysis": {"available": llm.llm_available()},
+        "ai_provider": llm.provider(),
+        "message_analysis": {"available": True, "ai_explanations": llm_ready},
+        "screenshot_analysis": {"available": llm_ready},
         "email_analysis": {"available": True},
         "link_check": {"available": True, "reputation_lookup": bool(settings.google_safe_browsing_api_key)},
         "number_lookup": {"available": True},
-        "languages": list(llm.LANGUAGE_NAMES),
+        # What works in each official language, so the PWA can set expectations in its language picker.
+        "languages": [
+            {
+                "code": lang.code,
+                "name": lang.native_name,
+                "results_in_language": llm_ready or lang.code == "en",
+                "understands_messages": llm_ready or lang.code == "en",
+                "voice_clone_check": True,
+                "voice_transcription": "local" if lang.code in models["transcription_languages"]
+                else "ai_experimental" if llm.can_transcribe_audio() else None,
+            }
+            for lang in LANGUAGES.values()
+        ],
         "coming_soon": ["face_video_deepfake", "live_call_protection"],
     }

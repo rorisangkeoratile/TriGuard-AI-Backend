@@ -10,8 +10,8 @@ voices, messages, emails, links and phone numbers **before** they pay or share p
 | Feature | Endpoint | How it works |
 |---|---|---|
 | 🎙️ **Voice-clone check** (MVP) | `POST /api/v1/voice/analyze` | wav2vec2 deepfake-audio model + acoustic signals + Whisper transcript checked for scam tactics + quick "what did the caller ask?" answers |
-| 💬 Scam message check | `POST /api/v1/messages/analyze` | SA-specific rule engine (offline) + Claude explanation in the user's language |
-| 📸 Screenshot check | `POST /api/v1/messages/screenshot` | Claude reads a screenshot of any chat and analyses it |
+| 💬 Scam message check | `POST /api/v1/messages/analyze` | SA-specific rule engine (offline) + AI explanation (Gemini, free) in the user's language |
+| 📸 Screenshot check | `POST /api/v1/messages/screenshot` | The AI model reads a screenshot of any chat and analyses it |
 | 📧 Email phishing check | `POST /api/v1/email/analyze` | SPF/DKIM/DMARC failures, spoofed bank names, Reply-To tricks, lying links, dangerous attachments |
 | 🔗 Link check | `POST /api/v1/links/check` | Look-alike bank/government domains, shorteners, punycode, risky TLDs, optional Google Safe Browsing |
 | 📞 Number lookup (Truecaller-style) | `GET /api/v1/numbers/lookup?number=` | Community scam reports per number |
@@ -33,6 +33,45 @@ Every analysis returns the same shape, so the frontend can use **one result scre
 }
 ```
 
+## All 11 official languages
+
+Every endpoint takes a `language` (`en, af, zu, xh, nso, ts, st, tn, ss, ve, nr`). Messages, emails and
+screenshots also accept `auto`, which answers in the message's own language. Results include `language`
+(and `detected_language` for messages).
+
+| | en | af | zu | xh | nso | ts | st | tn | ss | ve | nr |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| Understand messages / emails (AI) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Results in this language (AI) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Offline scam keywords (no API key) | ✅ | basic | basic | basic | basic | basic | basic | basic | basic | basic | basic |
+| Voice-clone check (language-independent) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Voice-note transcription | Whisper | Whisper | MMS* / AI† | MMS* / AI† | MMS* / AI† | MMS* / AI† | AI† | AI† | AI† | AI† | AI† |
+
+† Experimental: Gemini transcribes the voice note when no local model covers the language. Quality for
+these languages is unmeasured - test with native speakers before relying on it in the demo.
+
+\* Meta MMS is a 3.9 GB opt-in download (`MMS_ENABLED=true`). For voice notes in languages without
+transcription, TriGuard still runs the voice-clone check and asks the user quick questions about the call
+(asked for money? urgent? secret?), which work in every language.
+
+Offline keywords cover the most common scam phrases only and should be reviewed by native speakers
+(`app/services/scam_rules.py`, `ML`). Without an API key, results are in English.
+
+`GET /api/v1/capabilities` returns this table live, so the PWA can show it in its language picker.
+
+## AI provider
+
+| Provider | Cost | Setting |
+|---|---|---|
+| Google Gemini (`gemini-3.8-flash`) | **Free tier** (sign in with a Google account) | `GEMINI_API_KEY` |
+| Anthropic Claude (`claude-opus-5-5`) | Paid | `ANTHROPIC_API_KEY` |
+
+`LLM_PROVIDER=auto` uses whichever key is set. Swap providers without changing any code.
+
+> ⚠️ On Gemini's **free tier, Google may use submitted content to improve its products**. Fine for a
+> hackathon demo with sample scam messages; for real users, switch to a paid tier (Gemini or Claude),
+> where content isn't used for training, and say so in the privacy policy.
+
 ## Privacy by design (POPIA)
 
 - Audio, screenshots and messages are analysed **in memory and never stored**.
@@ -47,7 +86,7 @@ python -m venv .venv
 .\.venv\Scripts\activate
 pip install torch --index-url https://download.pytorch.org/whl/cpu
 pip install -r requirements.txt
-copy .env.example .env   # add ANTHROPIC_API_KEY (optional but recommended)
+copy .env.example .env   # add a free GEMINI_API_KEY from https://aistudio.google.com/apikey
 uvicorn app.main:app --reload --port 8000
 ```
 
@@ -69,7 +108,7 @@ done
 then set `VOICE_MODEL_ID=models/deepfake-audio` in `.env` (and `TRANSCRIPTION_MODEL_ID=openai/whisper-tiny`
 for a smaller ~150 MB transcription model).
 
-Without an `ANTHROPIC_API_KEY` everything still works using the offline rule engine (screenshot reading
+Without an AI key everything still works using the offline rule engine (screenshot reading
 is the only feature that needs it).
 
 ### Demo numbers (seeded, fictional)
@@ -101,8 +140,8 @@ app/
     voice_detector.py   Deepfake model, Whisper, acoustic features
     voice_analysis.py   Voice pipeline -> one verdict
     scam_rules.py       South African scam pattern rules + entity extraction
-    llm.py              Claude analysis (structured output, multilingual, vision)
-    message_analysis.py Rules + links + Claude -> one verdict
+    llm.py              AI analysis via Gemini or Claude (structured output, multilingual, vision, audio)
+    message_analysis.py Rules + links + AI -> one verdict
     email_analysis.py   Header / sender / link / attachment checks
     links.py            URL heuristics + Google Safe Browsing
     numbers.py          Number normalisation + reputation

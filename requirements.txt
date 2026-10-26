@@ -6,7 +6,8 @@ pydantic-settings>=2.4
 httpx>=0.27
 
 # Analysis
-anthropic>=0.70
+google-genai>=2.30     # Gemini (free tier) - default AI provider
+anthropic>=2.0         # Claude (paid) - optional alternative
 numpy>=2.0
 av>=13.0
 phonenumbers>=8.13

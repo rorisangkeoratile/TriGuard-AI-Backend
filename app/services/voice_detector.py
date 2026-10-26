@@ -13,6 +13,7 @@ from dataclasses import dataclass, field
 import numpy as np
 
 from app.config import get_settings
+from app.languages import LANGUAGES
 from app.services.audio import TARGET_SR
 
 log = logging.getLogger(__name__)
@@ -30,12 +31,15 @@ class _Models:
     extractor: object | None = None
     fake_index: int | None = None
     asr: object | None = None
+    mms_model: object | None = None
+    mms_processor: object | None = None
     errors: dict[str, str] = field(default_factory=dict)
     loaded: bool = False
 
 
 _models = _Models()
 _lock = threading.Lock()
+_mms_lock = threading.Lock()
 
 
 def load_models() -> _Models:
@@ -78,6 +82,18 @@ def load_models() -> _Models:
                 log.exception("Transcription model failed to load")
                 _models.errors["transcription"] = str(exc)
 
+        if settings.transcription_enabled and settings.mms_enabled:
+            try:
+                from transformers import AutoProcessor, Wav2Vec2ForCTC
+
+                _models.mms_processor = AutoProcessor.from_pretrained(settings.mms_model_id)
+                _models.mms_model = Wav2Vec2ForCTC.from_pretrained(settings.mms_model_id)
+                _models.mms_model.eval()
+                log.info("Loaded multilingual transcription model %s", settings.mms_model_id)
+            except Exception as exc:
+                log.exception("MMS model failed to load")
+                _models.errors["mms"] = str(exc)
+
         _models.loaded = True
         return _models
 
@@ -87,6 +103,7 @@ def status() -> dict:
         "loaded": _models.loaded,
         "voice_model": get_settings().voice_model_id if _models.classifier is not None else None,
         "transcription_model": get_settings().transcription_model_id if _models.asr is not None else None,
+        "transcription_languages": [code for code in LANGUAGES if transcription_engine(code)],
         "errors": _models.errors,
     }
 
@@ -184,18 +201,45 @@ def synthetic_probability(audio: np.ndarray, speech_mask: np.ndarray) -> tuple[f
     return score, len(windows), None
 
 
-def transcribe(audio: np.ndarray) -> str | None:
-    models = load_models()
-    if models.asr is None:
+def transcription_engine(language: str) -> str | None:
+    """Which engine can transcribe `language` right now: 'whisper', 'mms' or None."""
+    lang = LANGUAGES.get(language)
+    if lang is None:
         return None
+    if lang.whisper and _models.asr is not None:
+        return "whisper"
+    if lang.mms and _models.mms_model is not None:
+        return "mms"
+    return None
+
+
+def transcribe(audio: np.ndarray, language: str) -> tuple[str | None, str | None]:
+    """Transcribe speech in `language`. Returns (text, engine), or (None, None) if unsupported."""
+    load_models()
+    engine = transcription_engine(language)
     try:
-        result = models.asr(
-            {"raw": audio, "sampling_rate": TARGET_SR},
-            return_timestamps=audio.size > 30 * TARGET_SR,
-            generate_kwargs={"task": "transcribe"},
-        )
+        if engine == "whisper":
+            result = _models.asr(
+                {"raw": audio, "sampling_rate": TARGET_SR},
+                return_timestamps=audio.size > 30 * TARGET_SR,
+                generate_kwargs={"task": "transcribe", "language": LANGUAGES[language].whisper},
+            )
+            text = result.get("text") or ""
+        elif engine == "mms":
+            import torch
+
+            # MMS swaps a small per-language adapter into one shared model, so requests take turns.
+            with _mms_lock:
+                _models.mms_processor.tokenizer.set_target_lang(LANGUAGES[language].mms)
+                _models.mms_model.load_adapter(LANGUAGES[language].mms)
+                inputs = _models.mms_processor(audio, sampling_rate=TARGET_SR, return_tensors="pt")
+                with torch.inference_mode():
+                    logits = _models.mms_model(**inputs).logits
+                text = _models.mms_processor.decode(logits.argmax(dim=-1)[0])
+        else:
+            return None, None
     except Exception:
-        log.exception("Transcription failed")
-        return None
-    text = (result.get("text") or "").strip()
-    return text or None
+        log.exception("Transcription failed (%s, %s)", engine, language)
+        return None, None
+    text = text.strip()
+    return (text, engine) if text else (None, None)

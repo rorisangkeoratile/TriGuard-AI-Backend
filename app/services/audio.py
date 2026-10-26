@@ -2,6 +2,7 @@
 into 16 kHz mono float32 samples. PyAV bundles its own FFmpeg, so no system install is needed."""
 
 import io
+import wave
 
 import av
 import numpy as np
@@ -48,3 +49,14 @@ def decode_audio(data: bytes, max_seconds: int) -> np.ndarray:
     if peak > 1.0:
         audio /= peak
     return audio
+
+
+def to_wav_bytes(audio: np.ndarray) -> bytes:
+    """Encode decoded samples as a 16-bit mono WAV (for sending to a cloud speech model)."""
+    buf = io.BytesIO()
+    with wave.open(buf, "wb") as w:
+        w.setnchannels(1)
+        w.setsampwidth(2)
+        w.setframerate(TARGET_SR)
+        w.writeframes((np.clip(audio, -1, 1) * 32767).astype("<i2").tobytes())
+    return buf.getvalue()

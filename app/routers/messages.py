@@ -1,10 +1,12 @@
 from fastapi import APIRouter, File, Form, HTTPException, UploadFile, status
 
+from app.languages import normalise_language
 from app.routers.uploads import read_upload
 from app.schemas import LinkCheckRequest, LinkCheckResult, MessageAnalysisRequest, MessageAnalysisResponse
 from app.services import llm
 from app.services.email_analysis import email_indicators, parse_email
 from app.services.links import check_link
+from app.services.localize import localize
 from app.services.message_analysis import analyse_message
 
 router = APIRouter(prefix="/api/v1", tags=["messages"])
@@ -23,7 +25,7 @@ async def analyze_message(body: MessageAnalysisRequest) -> MessageAnalysisRespon
 @router.post("/messages/screenshot", response_model=MessageAnalysisResponse)
 async def analyze_screenshot(
     file: UploadFile = File(..., description="Screenshot of a suspicious message (png, jpeg, webp)."),
-    language: str = Form("en"),
+    language: str = Form("auto", description="Result language, or 'auto' for the message's own language."),
 ) -> MessageAnalysisResponse:
     """Read a screenshot of a message (e.g. shared from any chat app) and check it for scam signs."""
     if not llm.llm_available():
@@ -43,7 +45,7 @@ async def analyze_screenshot(
 async def analyze_email(
     file: UploadFile | None = File(None, description="A saved email (.eml) - includes headers for spoofing checks."),
     raw: str | None = Form(None, description="Raw email source ('Show original' in Gmail), or just the email text."),
-    language: str = Form("en"),
+    language: str = Form("auto", description="Result language, or 'auto' for the email's own language."),
 ) -> MessageAnalysisResponse:
     """Check an email for phishing: spoofed sender, failed SPF/DKIM/DMARC, lying links, dangerous attachments."""
     if file is not None:
@@ -74,4 +76,4 @@ async def analyze_email(
 @router.post("/links/check", response_model=LinkCheckResult)
 async def check_link_endpoint(body: LinkCheckRequest) -> LinkCheckResult:
     """Check a link before opening it: look-alike bank/government sites, shorteners, blocklists."""
-    return await check_link(body.url)
+    return await localize(await check_link(body.url), normalise_language(body.language))

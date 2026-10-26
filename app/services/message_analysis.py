@@ -1,10 +1,12 @@
-"""Combines the rule engine, link checks and Claude into one verdict for a message, email or screenshot."""
+"""Combines the rule engine, link checks and the AI model into one verdict for a message, email or screenshot."""
 
 import asyncio
 
+from app.languages import AUTO, LANGUAGES, normalise_language
 from app.schemas import Indicator, MessageAnalysisResponse, RiskLevel
 from app.services import llm, risk
 from app.services.links import check_link
+from app.services.localize import localize
 from app.services.scam_rules import extract_entities, run_rules
 
 SEVERITY_WEIGHT = {"low": 0.2, "medium": 0.4, "high": 0.65}
@@ -15,15 +17,17 @@ async def analyse_message(
     *,
     channel: str = "other",
     sender: str | None = None,
-    language: str = "en",
+    language: str = AUTO,
     kind: str = "message",
     extra_indicators: list[Indicator] | None = None,
     image: tuple[bytes, str] | None = None,
 ) -> MessageAnalysisResponse:
+    """`language` is the language to answer in, or "auto" to answer in the message's own language."""
+    language = normalise_language(language, default=AUTO)
     rule_indicators, scam_type = run_rules(text) if text else ([], None)
     indicators = list(extra_indicators or []) + rule_indicators
 
-    verdict = await llm.analyse_with_claude(
+    verdict = await llm.analyse_message_with_ai(
         text=text or None,
         channel=channel,
         sender=sender,
@@ -32,7 +36,7 @@ async def analyse_message(
         image=image,
     )
 
-    # Screenshots only have text once Claude has read them.
+    # Screenshots only have text once the AI has read them.
     extracted_text = verdict.extracted_text.strip() if verdict and verdict.extracted_text else None
     if image and extracted_text and not text:
         text = extracted_text
@@ -60,7 +64,7 @@ async def analyse_message(
                 code="ai_" + flag.severity, title=flag.title, detail=flag.detail,
                 weight=SEVERITY_WEIGHT[flag.severity], source="llm",
             ))
-        # Claude reads context the rules can't (and spots false alarms), so it leads,
+        # The AI reads context the rules can't (and spots false alarms), so it leads,
         # but hard evidence like a blocklisted link or an OTP request keeps a floor under the score.
         hard_floor = max((i.weight for i in indicators if i.source in ("link", "reputation", "email_auth")), default=0)
         score = max(round(0.7 * verdict.risk_score + 0.3 * rules_score), round(hard_floor * 100))
@@ -82,7 +86,16 @@ async def analyse_message(
         advice = risk.build_advice("message", level)
 
     indicators.sort(key=lambda i: i.weight, reverse=True)
-    return MessageAnalysisResponse(
+    detected = verdict.detected_language if verdict and verdict.detected_language in LANGUAGES else None
+    target = language
+    if target == AUTO:
+        target = detected or "en"
+    ai_wrote = set()
+    if verdict:
+        ai_wrote = {verdict.headline, verdict.summary, *verdict.advice,
+                        *(t for f in verdict.red_flags for t in (f.title, f.detail))}
+
+    result = MessageAnalysisResponse(
         kind=kind,
         risk_level=level,
         risk_score=score,
@@ -91,8 +104,14 @@ async def analyse_message(
         indicators=indicators,
         advice=advice,
         scam_type=scam_type,
+        detected_language=detected,
         entities=entities,
         links=links,
         ai_used=verdict is not None,
         extracted_text=extracted_text if image else None,
     )
+    if verdict and target != "en":
+        result.language = target  # The AI already wrote its parts in the target language
+    # Link results reuse the same fixed sentences, so after the first time these come from the cache.
+    await asyncio.gather(*(localize(link, target) for link in result.links))
+    return await localize(result, target, already_translated=ai_wrote)

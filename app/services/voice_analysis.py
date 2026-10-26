@@ -4,9 +4,11 @@ import asyncio
 from dataclasses import dataclass
 
 from app.config import get_settings
+from app.languages import language_name, normalise_language
 from app.schemas import Indicator, RiskLevel, VoiceAnalysisResponse, VoiceModelResult
-from app.services import risk, voice_detector
-from app.services.audio import decode_audio
+from app.services import llm, risk, voice_detector
+from app.services.audio import decode_audio, to_wav_bytes
+from app.services.localize import localize
 from app.services.message_analysis import analyse_message
 
 
@@ -69,15 +71,28 @@ def _acoustic_indicators(features: dict[str, float]) -> list[Indicator]:
     return indicators
 
 
-async def analyse_voice(data: bytes, *, context: CallContext, language: str = "en") -> VoiceAnalysisResponse:
+async def analyse_voice(
+    data: bytes, *, context: CallContext, language: str = "en", audio_language: str | None = None
+) -> VoiceAnalysisResponse:
+    """`language` is the user's app language (for the result); `audio_language` is what's spoken in the
+    recording, defaulting to the app language."""
     settings = get_settings()
+    language = normalise_language(language)
+    audio_language = normalise_language(audio_language, default=language)
+
     audio = await asyncio.to_thread(decode_audio, data, settings.max_audio_seconds)
     features, speech_mask = await asyncio.to_thread(voice_detector.acoustic_features, audio)
 
     probability, segments, model_error = await asyncio.to_thread(
         voice_detector.synthetic_probability, audio, speech_mask
     )
-    transcript = await asyncio.to_thread(voice_detector.transcribe, audio) if features["speech_seconds"] >= 1 else None
+    transcript, engine = None, None
+    if features["speech_seconds"] >= 1:
+        transcript, engine = await asyncio.to_thread(voice_detector.transcribe, audio, audio_language)
+        if transcript is None and llm.can_transcribe_audio():
+            # No local model for this language (e.g. Sesotho, Setswana): ask the AI model instead.
+            transcript = await llm.transcribe_with_ai(to_wav_bytes(audio), audio_language)
+            engine = "ai_experimental" if transcript else None
 
     indicators: list[Indicator] = []
     notes: list[str] = []
@@ -98,6 +113,13 @@ async def analyse_voice(data: bytes, *, context: CallContext, language: str = "e
         notes.append("The recording has very little speech, so the result is less reliable. Try 5-15 seconds.")
     elif low_quality:
         notes.append("The recording is noisy, so the result is less reliable.")
+
+    if transcript is None and features["speech_seconds"] >= 1 and voice_detector.transcription_engine(audio_language) is None \
+            and not llm.can_transcribe_audio():
+        notes.append(
+            f"We can't turn {language_name(audio_language)} speech into text yet, so we couldn't check the words. "
+            "Answer the quick questions about the call to get a better result."
+        )
 
     transcript_risk = None
     if transcript:
@@ -132,7 +154,7 @@ async def analyse_voice(data: bytes, *, context: CallContext, language: str = "e
         summary += " " + " ".join(notes)
 
     indicators.sort(key=lambda i: i.weight, reverse=True)
-    return VoiceAnalysisResponse(
+    result = VoiceAnalysisResponse(
         risk_level=level,
         risk_score=score,
         headline=risk.headline("voice" if probability is not None and probability >= 0.3 else "call", level),
@@ -148,6 +170,10 @@ async def analyse_voice(data: bytes, *, context: CallContext, language: str = "e
             note=model_error,
         ),
         acoustic_features=features,
+        audio_language=audio_language,
         transcript=transcript,
+        transcript_engine=engine,
         transcript_risk=transcript_risk,
     )
+    # The transcript check is already in the user's language.
+    return await localize(result, language, already_translated={transcript_risk.summary} if transcript_risk else set())

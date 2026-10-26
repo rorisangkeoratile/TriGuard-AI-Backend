@@ -1,8 +1,10 @@
 from datetime import datetime
 
 from fastapi import APIRouter, HTTPException, Query, Request, status
+from fastapi.concurrency import run_in_threadpool
 
 from app import db
+from app.languages import normalise_language
 from app.schemas import (
     NumberLookupResponse,
     NumberReportCategory,
@@ -10,18 +12,24 @@ from app.schemas import (
     NumberReportResponse,
     ReportedNumber,
 )
+from app.services.localize import localize
 from app.services.numbers import InvalidNumberError, lookup, normalise
 
 router = APIRouter(prefix="/api/v1/numbers", tags=["numbers"])
 
 
 @router.get("/lookup", response_model=NumberLookupResponse)
-def lookup_number(number: str = Query(..., min_length=3, max_length=32, examples=["0710000001"])) -> NumberLookupResponse:
+async def lookup_number(
+    number: str = Query(..., min_length=3, max_length=32, examples=["0710000001"]),
+    language: str = Query("en", description="Language for the result."),
+) -> NumberLookupResponse:
     """Truecaller-style check: has the TriGuard community reported this number?"""
     try:
-        return lookup(number)
+        result = await run_in_threadpool(lookup, number)
     except InvalidNumberError as exc:
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, str(exc)) from exc
+    # User comments stay as written; everything else is translated.
+    return await localize(result, normalise_language(language))
 
 
 @router.post("/report", response_model=NumberReportResponse, status_code=status.HTTP_201_CREATED)

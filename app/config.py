@@ -22,16 +22,28 @@ class Settings(BaseSettings):
     voice_model_enabled: bool = True
     voice_model_id: str = "mo-thecreator/Deepfake-audio-detection"
     # Transcribe voice notes so the words can also be checked for scam tactics.
+    # Whisper covers English + Afrikaans. Meta MMS (3.9 GB, opt-in) adds isiZulu, isiXhosa, Sepedi, Xitsonga.
     transcription_enabled: bool = True
     transcription_model_id: str = "openai/whisper-base"
+    mms_enabled: bool = False
+    mms_model_id: str = "facebook/mms-1b-all"
     max_audio_seconds: int = 60
     max_upload_mb: int = 15
 
-    # Claude is used for plain-language scam analysis and screenshot reading.
-    # Uses ANTHROPIC_API_KEY from the environment; everything still works without it (rules only).
+    # An AI model powers the 11 official languages, plain-language explanations and screenshot reading.
+    # Everything still works without one (offline rules, English results).
+    #   gemini    - Google Gemini, has a free tier (GEMINI_API_KEY from https://aistudio.google.com/apikey)
+    #   anthropic - Claude, paid (ANTHROPIC_API_KEY)
+    #   auto      - whichever key is set, preferring Gemini
     llm_enabled: bool = True
+    llm_provider: str = "auto"
+    gemini_api_key: str | None = None
+    gemini_model: str = "gemini-3.8-flash"
+    anthropic_api_key: str | None = None
     llm_model: str = "claude-opus-5-5"
     llm_effort: str = "low"
+    # Let the AI model transcribe voice notes in languages the local speech models don't cover (experimental).
+    llm_transcription_enabled: bool = True
 
     # Optional: Google Safe Browsing v4 key for link reputation checks.
     google_safe_browsing_api_key: str | None = None

@@ -30,6 +30,7 @@ class RiskAssessment(BaseModel):
     summary: str
     indicators: list[Indicator] = []
     advice: list[str] = []
+    language: str = Field(default="en", description="Language the text in this result is written in.")
     disclaimer: str = (
         "TriGuard gives risk indicators, not proof. When in doubt, end the conversation and "
         "contact the person or organisation on a number or channel you already trust."
@@ -49,7 +50,9 @@ class VoiceAnalysisResponse(RiskAssessment):
     duration_seconds: float
     model: VoiceModelResult
     acoustic_features: dict[str, float] = {}
+    audio_language: str | None = Field(default=None, description="Language spoken in the recording.")
     transcript: str | None = None
+    transcript_engine: str | None = None
     transcript_risk: RiskAssessment | None = None
 
 
@@ -65,7 +68,11 @@ class MessageAnalysisRequest(BaseModel):
     text: str = Field(min_length=1, max_length=20_000)
     channel: MessageChannel = MessageChannel.other
     sender: str | None = Field(default=None, max_length=320, description="Phone number, email or name shown.")
-    language: str = Field(default="en", description="Language for the explanation, e.g. en, af, zu, xh, st, tn.")
+    language: str = Field(
+        default="auto",
+        description="Language for the explanation: en, af, zu, xh, nso, ts, st, tn, ss, ve, nr - "
+                    "or 'auto' to answer in the message's own language.",
+    )
 
 
 class ExtractedEntities(BaseModel):
@@ -78,6 +85,7 @@ class ExtractedEntities(BaseModel):
 class MessageAnalysisResponse(RiskAssessment):
     kind: Literal["message", "email", "screenshot"] = "message"
     scam_type: str | None = None
+    detected_language: str | None = Field(default=None, description="Main language the message was written in.")
     entities: ExtractedEntities = ExtractedEntities()
     links: list["LinkCheckResult"] = []
     ai_used: bool = False
@@ -86,6 +94,7 @@ class MessageAnalysisResponse(RiskAssessment):
 
 class LinkCheckRequest(BaseModel):
     url: str = Field(min_length=3, max_length=2048)
+    language: str = Field(default="en", description="Language for the result.")
 
 
 class LinkCheckResult(RiskAssessment):

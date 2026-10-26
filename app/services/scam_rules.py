@@ -28,6 +28,43 @@ SA_BRANDS = (
     "sanral", "traffic fine", "saps",
 )
 
+# Key scam phrases in the other official languages, so the offline rules still catch the most common
+# scams when no AI model is available. The AI handles the full meaning of messages in every language.
+# TODO: have native speakers on the team review and extend these.
+ML: dict[str, tuple[str, ...]] = {
+    "new_number": (
+        r"\b(my )?nuwe nommer\b", r"\bfoon (is )?(gesteel|verloor|stukkend)\b",  # af
+        # Nguni nouns take prefixes ("le yinombolo yami entsha" = "this is my new number").
+        r"\b[yl]?inombolo (yami |yam )?entsha\b",  # zu, xh
+        r"\b[yl]?inombolo (yami )?lensha\b",  # ss
+        r"\bnomoro (ya ka |yaka |ya )?(e ?ntjha|e ?ntšha|e ?ntsha|ye ?mpsha)\b",  # st, tn, nso
+        r"\bnomboro (ya mina )?(leyintshwa|yintshwa)\b",  # ts
+        r"\bnomboro (yanga )?ntswa\b",  # ve
+    ),
+    "send_money": (
+        r"\bstuur (vir my )?(asseblief )?(die )?geld\b",  # af
+        # Verbs take object/subject prefixes and suffixes ("ungithumelele" = "send me"), so match the stem.
+        r"\b\w*(thumel|tfumel)\w*\b.{0,30}\bi?mali\b",  # zu, xh, ss, nr
+        r"\b\w*(romel|thomel)\w*\b.{0,30}\b(chelete|tšhelete|tshelete|madi)\b",  # st, tn, nso
+        r"\b\w*rhumel\w*\b.{0,30}\bmali\b",  # ts
+        r"\b\w*(rumel|thumel)\w*\b.{0,30}\btshelede\b",  # ve
+    ),
+    "urgent": (
+        r"\b(dringend|onmiddellik|nou dadelik|vandag nog)\b",  # af
+        r"\b(ngokushesha|masinyane|ngekushesha)\b",  # zu, ss
+        r"\b(ngokukhawuleza|khawuleza)\b",  # xh
+        r"\b(kapele|ka pela|ka bonako|hang hang)\b",  # st, tn, nso
+        r"\bhi ku hatlisa\b",  # ts
+        r"\bnga u ṱavhanya\b",  # ve
+    ),
+    "secrecy": (
+        r"\bmoenie (vir )?(iemand|niemand|pa|ma|die bank)\b.{0,20}\b(sê|vertel)\b",  # af
+        r"\bungatsheli (muntu|bani|baba|mama)\b",  # zu
+        r"\bungaxeleli (mntu|bani|tata|mama)\b",  # xh
+        r"\b(o se ke wa bolella|se bolelle) (motho|mang)\b",  # st
+    ),
+}
+
 RULES: tuple[Rule, ...] = (
     Rule(
         "otp_request", "Asks for an OTP or PIN",
@@ -42,8 +79,8 @@ RULES: tuple[Rule, ...] = (
         "Messages like 'Mom, I lost my phone, this is my new number' are a very common South African scam.",
         0.6,
         (r"\b(this is my new number|new number|lost my phone|phone (got )?stolen|my phone (is )?broke)\b",
-         r"\b(hi|hey|hello) (mom|mum|ma|mama|dad|papa|tata|gogo|aunty|uncle|sis|bro)\b",
-         r"\b(i'?m in trouble|i am in trouble|i need help urgently|stuck at|accident|hospital|arrested)\b"),
+         r"\b(i'?m in trouble|i am in trouble|i need help urgently|stuck at|accident|hospital|arrested)\b",
+         *ML["new_number"]),
         "family_impersonation",
     ),
     Rule(
@@ -53,7 +90,8 @@ RULES: tuple[Rule, ...] = (
         (r"\b(send|transfer|pay|deposit|e-?wallet|cash ?send|instant money|blue voucher|1voucher|ott voucher|"
          r"airtime|gift ?card|crypto|bitcoin|usdt)\b.{0,40}\b(r ?\d|money|amount|asap|now|today|me)\b",
          r"\bpay(ment)? (of|to)\b|\bsettle (the|your) (fee|fine|amount)\b",
-         r"\b(e-?wallet|cash ?send|instant money)\b"),
+         r"\b(e-?wallet|cash ?send|instant money)\b",
+         *ML["send_money"]),
         "money_request",
     ),
     Rule(
@@ -63,7 +101,8 @@ RULES: tuple[Rule, ...] = (
         (r"\b(urgent(ly)?|immediately|within (24|48) ?(hours|hrs)|today only|final (notice|warning|reminder)|"
          r"last chance|act now|asap|expires? (today|soon)|right now)\b",
          r"\b(account|card|profile|service).{0,30}\b(suspend(ed)?|block(ed)?|frozen|locked|deactivat(ed|ion)|closed)\b",
-         r"\b(arrest|warrant|legal action|summons|court|blacklist(ed)?)\b"),
+         r"\b(arrest|warrant|legal action|summons|court|blacklist(ed)?)\b",
+         *ML["urgent"]),
     ),
     Rule(
         "prize_lottery", "Unexpected prize, refund or grant",
@@ -110,7 +149,8 @@ RULES: tuple[Rule, ...] = (
         "Being told not to tell anyone, or not to call the bank, is a strong scam signal.",
         0.45,
         (r"\b(don'?t|do not) (tell|call|inform|share with) (anyone|anybody|the bank|your family|mom|dad)\b",
-         r"\b(keep (this|it) (secret|between us|confidential))\b"),
+         r"\b(keep (this|it) (secret|between us|confidential))\b",
+         *ML["secrecy"]),
     ),
     Rule(
         "remote_access", "Asks you to install an app or share your screen",
