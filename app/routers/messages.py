@@ -1,0 +1,77 @@
+from fastapi import APIRouter, File, Form, HTTPException, UploadFile, status
+
+from app.routers.uploads import read_upload
+from app.schemas import LinkCheckRequest, LinkCheckResult, MessageAnalysisRequest, MessageAnalysisResponse
+from app.services import llm
+from app.services.email_analysis import email_indicators, parse_email
+from app.services.links import check_link
+from app.services.message_analysis import analyse_message
+
+router = APIRouter(prefix="/api/v1", tags=["messages"])
+
+IMAGE_TYPES = {"image/png", "image/jpeg", "image/webp", "image/gif"}
+
+
+@router.post("/messages/analyze", response_model=MessageAnalysisResponse)
+async def analyze_message(body: MessageAnalysisRequest) -> MessageAnalysisResponse:
+    """Check an SMS, email body, social media DM or any text the user pasted or shared into TriGuard."""
+    return await analyse_message(
+        body.text, channel=body.channel.value, sender=body.sender, language=body.language
+    )
+
+
+@router.post("/messages/screenshot", response_model=MessageAnalysisResponse)
+async def analyze_screenshot(
+    file: UploadFile = File(..., description="Screenshot of a suspicious message (png, jpeg, webp)."),
+    language: str = Form("en"),
+) -> MessageAnalysisResponse:
+    """Read a screenshot of a message (e.g. shared from any chat app) and check it for scam signs."""
+    if not llm.llm_available():
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, "Screenshot reading needs the AI service to be configured.")
+    data = await read_upload(file, allowed_prefixes=("image/",))
+    media_type = (file.content_type or "image/png").lower()
+    if media_type not in IMAGE_TYPES:
+        raise HTTPException(status.HTTP_415_UNSUPPORTED_MEDIA_TYPE, "Use a PNG, JPEG, WebP or GIF screenshot.")
+    result = await analyse_message("", channel="screenshot", language=language, kind="screenshot",
+                                   image=(data, media_type))
+    if not result.ai_used:
+        raise HTTPException(status.HTTP_502_BAD_GATEWAY, "We couldn't read this screenshot. Try pasting the text instead.")
+    return result
+
+
+@router.post("/email/analyze", response_model=MessageAnalysisResponse)
+async def analyze_email(
+    file: UploadFile | None = File(None, description="A saved email (.eml) - includes headers for spoofing checks."),
+    raw: str | None = Form(None, description="Raw email source ('Show original' in Gmail), or just the email text."),
+    language: str = Form("en"),
+) -> MessageAnalysisResponse:
+    """Check an email for phishing: spoofed sender, failed SPF/DKIM/DMARC, lying links, dangerous attachments."""
+    if file is not None:
+        data = await read_upload(file)
+    elif raw:
+        data = raw.encode()
+    else:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Upload an .eml file or paste the email.")
+
+    msg, body, links = parse_email(data)
+    has_headers = bool(msg.get("From"))
+    text = body if has_headers else data.decode(errors="replace")
+    if has_headers and msg.get("Subject"):
+        text = f"Subject: {msg['Subject']}\n\n{text}"
+    if not text.strip():
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "We couldn't find any text in this email.")
+
+    return await analyse_message(
+        text[:20_000],
+        channel="email",
+        sender=str(msg.get("From")) if has_headers else None,
+        language=language,
+        kind="email",
+        extra_indicators=email_indicators(msg, links) if has_headers else [],
+    )
+
+
+@router.post("/links/check", response_model=LinkCheckResult)
+async def check_link_endpoint(body: LinkCheckRequest) -> LinkCheckResult:
+    """Check a link before opening it: look-alike bank/government sites, shorteners, blocklists."""
+    return await check_link(body.url)
