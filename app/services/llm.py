@@ -5,10 +5,12 @@ Two interchangeable providers: Google Gemini (free tier) and Anthropic Claude (p
 Every function returns None / the input unchanged on failure, so callers fall back to the offline rules.
 """
 
+import asyncio
 import base64
 import json
 import logging
 import os
+import time
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, ValidationError
@@ -96,6 +98,8 @@ def can_transcribe_audio() -> bool:
 # ---------------------------------------------------------------- Gemini
 
 _gemini_client = None
+_gemini_cooldown: dict[str, float] = {}  # model -> monotonic time until which it's skipped
+GEMINI_COOLDOWN_SECONDS = 300
 
 
 def _gemini_schema(schema: dict) -> dict:
@@ -106,7 +110,14 @@ def _gemini_schema(schema: dict) -> dict:
         if isinstance(node, dict):
             if "$ref" in node:
                 return walk(defs[node["$ref"].rsplit("/", 1)[-1]])
-            return {k: walk(v) for k, v in node.items() if k not in ("$defs", "additionalProperties", "title")}
+            out = {}
+            for key, value in node.items():
+                if key == "properties":
+                    # Keys here are field names (one is literally "title"), so never filter them.
+                    out[key] = {name: walk(prop) for name, prop in value.items()}
+                elif key not in ("$defs", "additionalProperties", "title"):
+                    out[key] = walk(value)
+            return out
         if isinstance(node, list):
             return [walk(v) for v in node]
         return node
@@ -136,18 +147,33 @@ async def _gemini_call(content: list[Part], system: str, max_tokens: int, schema
     kwargs = {}
     if schema is not None:
         kwargs["response_format"] = {"type": "text", "mime_type": "application/json", "schema": _gemini_schema(schema)}
-    try:
-        interaction = await _gemini_client.aio.interactions.create(
-            model=settings.gemini_model,
-            system_instruction=system,
-            input=_gemini_parts(content),
-            generation_config={"thinking_level": "low", "max_output_tokens": max_tokens},
-            **kwargs,
-        )
-    except Exception as exc:  # network, quota (429), bad key... all mean "fall back to rules"
-        log.warning("Gemini request failed: %s", exc)
-        return None
-    return interaction.output_text
+    parts = _gemini_parts(content)
+
+    # Try the main model, then the lighter one: an overloaded model can hang rather than error.
+    # A model that just failed is skipped for a while so every request doesn't pay the timeout again.
+    models = list(dict.fromkeys(filter(None, (settings.gemini_model, settings.gemini_fallback_model))))
+    for model in models:
+        if _gemini_cooldown.get(model, 0) > time.monotonic() and model != models[-1]:
+            continue
+        try:
+            interaction = await asyncio.wait_for(
+                _gemini_client.aio.interactions.create(
+                    model=model,
+                    system_instruction=system,
+                    input=parts,
+                    generation_config={"thinking_level": "low", "max_output_tokens": max_tokens},
+                    **kwargs,
+                ),
+                timeout=settings.gemini_timeout_seconds,
+            )
+            _gemini_cooldown.pop(model, None)
+            return interaction.output_text
+        except TimeoutError:
+            log.warning("Gemini %s timed out after %ss", model, settings.gemini_timeout_seconds)
+        except Exception as exc:  # network, overload (503), quota (429), bad key... try next / fall back to rules
+            log.warning("Gemini %s request failed: %s", model, exc)
+        _gemini_cooldown[model] = time.monotonic() + GEMINI_COOLDOWN_SECONDS
+    return None
 
 
 # ---------------------------------------------------------------- Anthropic

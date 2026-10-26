@@ -39,6 +39,9 @@ class Settings(BaseSettings):
     llm_provider: str = "auto"
     gemini_api_key: str | None = None
     gemini_model: str = "gemini-3.8-flash"
+    # Used when the main model is overloaded or slow (the free tier gets "high demand" errors at peak times).
+    gemini_fallback_model: str = "gemini-3.5-flash-lite"
+    gemini_timeout_seconds: float = 20
     anthropic_api_key: str | None = None
     llm_model: str = "claude-opus-5-5"
     llm_effort: str = "low"
