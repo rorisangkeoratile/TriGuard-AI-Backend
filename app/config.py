@@ -11,8 +11,12 @@ class Settings(BaseSettings):
 
     app_name: str = "TriGuard AI"
     environment: str = "development"
-    # Comma-separated list of origins allowed to call the API (the React PWA).
-    cors_origins: str = "http://localhost:5173,http://localhost:3000,http://127.0.0.1:5173"
+    # Comma-separated list of origins allowed to call the API (the React PWA). 5173 = `npm run dev`,
+    # 4173 = `npm run preview`. Add the deployed frontend URL here.
+    cors_origins: str = "http://localhost:5173,http://127.0.0.1:5173,http://localhost:4173,http://localhost:3000"
+    # Also allow any port on this computer and on the local Wi-Fi, so the team can test the PWA on their phones
+    # during development. Set CORS_ORIGIN_REGEX= (empty) in production.
+    cors_origin_regex: str = r"https?://(localhost|127\.0\.0\.1|192\.168\.\d+\.\d+|10\.\d+\.\d+\.\d+)(:\d+)?"
 
     # SQLite file for community number reports (Truecaller-style lookups).
     database_path: Path = Path("data/triguard.db")

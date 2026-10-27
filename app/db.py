@@ -1,11 +1,18 @@
-"""Tiny SQLite store for community scam reports. Only reported numbers are stored - never user messages or audio."""
+"""Tiny SQLite store for community scam reports and anonymous check counts.
+
+Only reported numbers and "a check happened, with this result" counters are stored - never user messages,
+audio, screenshots or the numbers people look up.
+"""
 
 import hashlib
+import logging
 import sqlite3
 from contextlib import contextmanager
 from datetime import UTC, datetime, timedelta
 
 from app.config import get_settings
+
+log = logging.getLogger(__name__)
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS number_reports (
@@ -19,6 +26,14 @@ CREATE TABLE IF NOT EXISTS number_reports (
     created_at TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_reports_number ON number_reports(number);
+CREATE TABLE IF NOT EXISTS check_events (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    kind TEXT NOT NULL,
+    risk_level TEXT NOT NULL,
+    scam_type TEXT,
+    created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_checks_created ON check_events(created_at);
 """
 
 # Clearly fictional demo entries so the lookup screen has something to show during the hackathon.
@@ -111,3 +126,39 @@ def top_reported(limit: int = 20) -> list[sqlite3.Row]:
             """,
             ((datetime.now(UTC) - timedelta(days=30)).isoformat(), limit),
         ).fetchall()
+
+
+def record_check(kind: str, risk_level: str, scam_type: str | None = None) -> None:
+    """Count a check for the Insights screen. Stores the result only, never what was checked."""
+    try:
+        with connect() as conn:
+            conn.execute(
+                "INSERT INTO check_events (kind, risk_level, scam_type, created_at) VALUES (?, ?, ?, ?)",
+                (kind, risk_level, scam_type, datetime.now(UTC).isoformat()),
+            )
+    except sqlite3.Error:
+        log.exception("Couldn't record check stats")  # stats must never break a check
+
+
+def insight_counts() -> dict:
+    now = datetime.now(UTC)
+    today = now.replace(hour=0, minute=0, second=0, microsecond=0).isoformat()
+    week = (now - timedelta(days=7)).isoformat()
+    month = (now - timedelta(days=30)).isoformat()
+    with connect() as conn:
+        checks_today = conn.execute("SELECT COUNT(*) FROM check_events WHERE created_at >= ?", (today,)).fetchone()[0]
+        scams_today = conn.execute(
+            "SELECT COUNT(*) FROM check_events WHERE created_at >= ? AND risk_level IN ('high', 'critical')", (today,)
+        ).fetchone()[0]
+        reports_week = conn.execute("SELECT COUNT(*) FROM number_reports WHERE created_at >= ?", (week,)).fetchone()[0]
+        categories = conn.execute(
+            "SELECT category, COUNT(*) AS total FROM number_reports WHERE created_at >= ?"
+            " GROUP BY category ORDER BY total DESC",
+            (month,),
+        ).fetchall()
+    return {
+        "checks_today": checks_today,
+        "scams_detected_today": scams_today,
+        "reports_this_week": reports_week,
+        "report_categories": [(row["category"], row["total"]) for row in categories],
+    }

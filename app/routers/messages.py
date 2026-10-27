@@ -1,5 +1,7 @@
 from fastapi import APIRouter, File, Form, HTTPException, UploadFile, status
+from fastapi.concurrency import run_in_threadpool
 
+from app import db
 from app.languages import normalise_language
 from app.routers.uploads import read_upload
 from app.schemas import LinkCheckRequest, LinkCheckResult, MessageAnalysisRequest, MessageAnalysisResponse
@@ -14,12 +16,17 @@ router = APIRouter(prefix="/api/v1", tags=["messages"])
 IMAGE_TYPES = {"image/png", "image/jpeg", "image/webp", "image/gif"}
 
 
+async def _counted(result: MessageAnalysisResponse) -> MessageAnalysisResponse:
+    await run_in_threadpool(db.record_check, result.kind, result.risk_level.value, result.scam_type)
+    return result
+
+
 @router.post("/messages/analyze", response_model=MessageAnalysisResponse)
 async def analyze_message(body: MessageAnalysisRequest) -> MessageAnalysisResponse:
     """Check an SMS, email body, social media DM or any text the user pasted or shared into TriGuard."""
-    return await analyse_message(
+    return await _counted(await analyse_message(
         body.text, channel=body.channel.value, sender=body.sender, language=body.language
-    )
+    ))
 
 
 @router.post("/messages/screenshot", response_model=MessageAnalysisResponse)
@@ -38,7 +45,7 @@ async def analyze_screenshot(
                                    image=(data, media_type))
     if not result.ai_used:
         raise HTTPException(status.HTTP_502_BAD_GATEWAY, "We couldn't read this screenshot. Try pasting the text instead.")
-    return result
+    return await _counted(result)
 
 
 @router.post("/email/analyze", response_model=MessageAnalysisResponse)
@@ -63,14 +70,14 @@ async def analyze_email(
     if not text.strip():
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "We couldn't find any text in this email.")
 
-    return await analyse_message(
+    return await _counted(await analyse_message(
         text[:20_000],
         channel="email",
         sender=str(msg.get("From")) if has_headers else None,
         language=language,
         kind="email",
         extra_indicators=email_indicators(msg, links) if has_headers else [],
-    )
+    ))
 
 
 @router.post("/links/check", response_model=LinkCheckResult)

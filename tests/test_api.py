@@ -207,3 +207,26 @@ def test_voice_without_model_uses_context(client):
 def test_voice_rejects_garbage(client):
     r = client.post("/api/v1/voice/analyze", files={"file": ("x.wav", b"not audio at all", "audio/wav")})
     assert r.status_code == 422
+
+
+def test_insights_counts_checks_and_reports(client):
+    before = client.get("/api/v1/insights").json()
+    client.post("/api/v1/messages/analyze", json={"text": "FNB: send me the OTP we just sent to verify your account"})
+    after = client.get("/api/v1/insights").json()
+    assert after["checks_today"] == before["checks_today"] + 1
+    assert after["reports_this_week"] >= 1
+    assert after["top_scam_types"][0]["label"]
+    assert after["most_reported"][0]["number"] == "+27710000001"
+
+
+@pytest.mark.parametrize("origin", ["http://localhost:5173", "http://192.168.1.20:5173"])
+def test_cors_allows_the_pwa(client, origin):
+    res = client.options("/api/v1/messages/analyze", headers={
+        "Origin": origin, "Access-Control-Request-Method": "POST", "Access-Control-Request-Headers": "content-type",
+    })
+    assert res.headers["access-control-allow-origin"] == origin
+
+
+def test_cors_blocks_unknown_sites(client):
+    res = client.get("/health", headers={"Origin": "https://evil.example"})
+    assert "access-control-allow-origin" not in res.headers

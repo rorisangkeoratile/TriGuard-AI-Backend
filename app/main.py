@@ -8,7 +8,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from app import db
 from app.config import get_settings
 from app.languages import LANGUAGES
-from app.routers import messages, numbers, voice
+from app.routers import insights, messages, numbers, voice
 from app.services import llm, voice_detector
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
@@ -35,6 +35,7 @@ app = FastAPI(
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.cors_origin_list,
+    allow_origin_regex=settings.cors_origin_regex or None,
     allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -43,6 +44,7 @@ app.add_middleware(
 app.include_router(voice.router)
 app.include_router(messages.router)
 app.include_router(numbers.router)
+app.include_router(insights.router)
 
 
 @app.get("/health", tags=["system"])

@@ -1,7 +1,9 @@
 from typing import Literal
 
 from fastapi import APIRouter, File, Form, HTTPException, UploadFile, status
+from fastapi.concurrency import run_in_threadpool
 
+from app import db
 from app.routers.uploads import read_upload
 from app.schemas import VoiceAnalysisResponse
 from app.services.audio import AudioDecodeError
@@ -36,6 +38,8 @@ async def analyze_voice(
         claims_to_be=claims_to_be,
     )
     try:
-        return await analyse_voice(data, context=context, language=language, audio_language=audio_language)
+        result = await analyse_voice(data, context=context, language=language, audio_language=audio_language)
     except AudioDecodeError as exc:
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, str(exc)) from exc
+    await run_in_threadpool(db.record_check, "voice", result.risk_level.value)
+    return result

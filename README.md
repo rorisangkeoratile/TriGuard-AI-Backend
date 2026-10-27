@@ -17,6 +17,7 @@ voices, messages, emails, links and phone numbers **before** they pay or share p
 | 📞 Number lookup (Truecaller-style) | `GET /api/v1/numbers/lookup?number=` | Community scam reports per number |
 | 🚩 Report a number | `POST /api/v1/numbers/report` | Anonymous, one report per device per number per day |
 | 📈 Trending scam numbers | `GET /api/v1/numbers/trending` | Most-reported numbers in the last 30 days |
+| 📊 Insights | `GET /api/v1/insights` | Checks today, scams detected, reports this week, top scam types, most-reported numbers |
 | ⚙️ Capabilities | `GET /api/v1/capabilities` | Lets the PWA show which features are live |
 
 Every analysis returns the same shape, so the frontend can use **one result screen**:
@@ -76,6 +77,19 @@ Offline keywords cover the most common scam phrases only and should be reviewed 
 
 - Audio, screenshots and messages are analysed **in memory and never stored**.
 - Only **reported phone numbers** (and an optional short comment) are stored, with a hashed reporter id.
+- For the Insights screen, each check adds an anonymous counter row (`kind`, `risk_level`, `scam_type`,
+  time) - never the message, audio or number that was checked.
+- A user's **check history stays on their phone** (browser storage in the PWA), not on the server.
+
+### What's in the database (SQLite, `data/triguard.db`)
+
+| Table | Holds | Why |
+|---|---|---|
+| `number_reports` | Reported number, scam type, channel, optional comment, hashed device id | Truecaller-style lookups |
+| `check_events` | Check type + result level only | Insights dashboard numbers |
+
+SQLite is enough for the hackathon (one file, no setup). For production, move to PostgreSQL (e.g. Supabase or
+Neon free tier) - the queries are plain SQL in `app/db.py`.
 - TriGuard does **not** read WhatsApp, SMS or calls automatically. Users choose what to check:
   record/upload, paste, or **share into TriGuard** from any app (PWA Web Share Target).
 
@@ -91,6 +105,25 @@ uvicorn app.main:app --reload --port 8000
 ```
 
 Open http://localhost:8000/docs for interactive API docs.
+
+### Connecting the React PWA (TriGuard-AI-Frontend)
+
+In the frontend, create `.env`:
+
+```
+VITE_USE_MOCK=false
+VITE_API_URL=http://localhost:8000
+```
+
+then `npm run dev`. All calls go through `src/services/api.js`, which maps backend results to the
+`{ verdict, score, reasons, reportCount }` shape the pages use (`low` counts as safe, `medium` as suspicious,
+`high`/`critical` as scam) and also passes through `headline`, `summary` and `advice`.
+
+CORS allows `localhost:5173` (dev), `4173` (preview) and `3000`, plus - in development - any port on this PC
+or the local Wi-Fi. **Testing on a phone:** run the backend with `--host 0.0.0.0`, find the PC's IP
+(`ipconfig`), and set `VITE_API_URL=http://<PC-IP>:8000` and `npm run dev -- --host`. Note that browsers only
+allow the microphone on `https` or `localhost`, so live recording on a phone needs the deployed (https) site;
+uploading a voice note works either way.
 
 The first start downloads the voice model (~380 MB) and Whisper base (~290 MB) from Hugging Face into
 your cache; the API is usable immediately and `/api/v1/capabilities` shows when the models are ready.

@@ -115,6 +115,7 @@ class NumberReportCategory(str, Enum):
     delivery_scam = "delivery_scam"
     sim_swap_otp = "sim_swap_otp"
     romance_scam = "romance_scam"
+    prize_lottery = "prize_lottery"
     spam_marketing = "spam_marketing"
     other = "other"
 
@@ -159,7 +160,22 @@ class ReportedNumber(BaseModel):
     number: str
     total_reports: int
     top_category: NumberReportCategory
+    top_category_label: str
     last_reported_at: datetime
 
 
 MessageAnalysisResponse.model_rebuild()
+
+
+class ScamTypeCount(BaseModel):
+    category: NumberReportCategory
+    label: str
+    count: int
+
+
+class InsightsResponse(BaseModel):
+    checks_today: int
+    scams_detected_today: int = Field(description="Checks today that came out high or critical risk.")
+    reports_this_week: int
+    top_scam_types: list[ScamTypeCount] = Field(description="Community reports by scam type, last 30 days.")
+    most_reported: list[ReportedNumber] = Field(description="Most-reported numbers, last 30 days.")

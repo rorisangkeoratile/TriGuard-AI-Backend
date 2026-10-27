@@ -13,7 +13,7 @@ from app.schemas import (
     ReportedNumber,
 )
 from app.services.localize import localize
-from app.services.numbers import InvalidNumberError, lookup, normalise
+from app.services.numbers import InvalidNumberError, category_label, lookup, normalise
 
 router = APIRouter(prefix="/api/v1/numbers", tags=["numbers"])
 
@@ -28,6 +28,7 @@ async def lookup_number(
         result = await run_in_threadpool(lookup, number)
     except InvalidNumberError as exc:
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, str(exc)) from exc
+    await run_in_threadpool(db.record_check, "number", result.risk_level.value)
     # User comments stay as written; everything else is translated.
     return await localize(result, normalise_language(language))
 
@@ -61,6 +62,7 @@ def trending(limit: int = Query(10, ge=1, le=50)) -> list[ReportedNumber]:
             number=row["number"],
             total_reports=row["total"],
             top_category=NumberReportCategory(row["top_category"]),
+            top_category_label=category_label(row["top_category"]),
             last_reported_at=datetime.fromisoformat(row["last_at"]),
         )
         for row in db.top_reported(limit)

@@ -32,9 +32,16 @@ CATEGORY_LABELS = {
     "delivery_scam": "fake delivery fees",
     "sim_swap_otp": "OTP / SIM-swap fraud",
     "romance_scam": "romance scams",
+    "prize_lottery": "fake prizes or lotteries",
     "spam_marketing": "spam or sales calls",
     "other": "other scams",
 }
+
+
+def category_label(category: str) -> str:
+    """'pretending to be a bank' -> 'Pretending to be a bank' (str.capitalize would turn 'AI' into 'ai')."""
+    label = CATEGORY_LABELS.get(category, category)
+    return label[:1].upper() + label[1:]
 
 
 class InvalidNumberError(ValueError):
