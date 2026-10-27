@@ -83,16 +83,22 @@ async def analyse_voice(
     audio = await asyncio.to_thread(decode_audio, data, settings.max_audio_seconds)
     features, speech_mask = await asyncio.to_thread(voice_detector.acoustic_features, audio)
 
-    probability, segments, model_error = await asyncio.to_thread(
-        voice_detector.synthetic_probability, audio, speech_mask
-    )
-    transcript, engine = None, None
-    if features["speech_seconds"] >= 1:
-        transcript, engine = await asyncio.to_thread(voice_detector.transcribe, audio, audio_language)
-        if transcript is None and llm.can_transcribe_audio():
+    async def words_check():
+        """Transcribe, then check the words for scam tactics. Runs alongside the voice-clone model."""
+        if features["speech_seconds"] < 1:
+            return None, None, None
+        text, eng = await asyncio.to_thread(voice_detector.transcribe, audio, audio_language)
+        if text is None and llm.can_transcribe_audio():
             # No local model for this language (e.g. Sesotho, Setswana): ask the AI model instead.
-            transcript = await llm.transcribe_with_ai(to_wav_bytes(audio), audio_language)
-            engine = "ai_experimental" if transcript else None
+            text = await llm.transcribe_with_ai(to_wav_bytes(audio), audio_language)
+            eng = "ai_experimental" if text else None
+        verdict = await analyse_message(text, channel="voice_note", language=language) if text else None
+        return text, eng, verdict
+
+    (probability, segments, model_error), (transcript, engine, transcript_risk) = await asyncio.gather(
+        asyncio.to_thread(voice_detector.synthetic_probability, audio, speech_mask),
+        words_check(),
+    )
 
     indicators: list[Indicator] = []
     notes: list[str] = []
@@ -121,15 +127,12 @@ async def analyse_voice(
             "Answer the quick questions about the call to get a better result."
         )
 
-    transcript_risk = None
-    if transcript:
-        transcript_risk = await analyse_message(transcript, channel="voice_note", language=language)
-        if transcript_risk.risk_score >= 40:
-            indicators.append(Indicator(
-                code="scam_words_in_audio", title="What was said sounds like a scam",
-                detail=transcript_risk.summary, weight=transcript_risk.risk_score / 100 * 0.8, source="llm"
-                if transcript_risk.ai_used else "rules",
-            ))
+    if transcript_risk and transcript_risk.risk_score >= 40:
+        indicators.append(Indicator(
+            code="scam_words_in_audio", title="What was said sounds like a scam",
+            detail=transcript_risk.summary, weight=transcript_risk.risk_score / 100 * 0.8, source="llm"
+            if transcript_risk.ai_used else "rules",
+        ))
 
     indicators += _context_indicators(context)
     score = risk.score_from_indicators(indicators)

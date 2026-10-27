@@ -42,9 +42,15 @@ _lock = threading.Lock()
 _mms_lock = threading.Lock()
 
 
-def load_models() -> _Models:
-    """Load models once (called at startup in a background thread, or lazily on first use)."""
-    with _lock:
+def load_models(wait: bool = True) -> _Models:
+    """Load models once (called at startup in a background thread, or lazily on first use).
+
+    With wait=False (used by requests), returns whatever is loaded so far instead of blocking while a slow
+    download finishes - e.g. the voice model can be used while Whisper is still downloading.
+    """
+    if not _lock.acquire(blocking=wait):
+        return _models
+    try:
         if _models.loaded:
             return _models
         settings = get_settings()
@@ -96,6 +102,8 @@ def load_models() -> _Models:
 
         _models.loaded = True
         return _models
+    finally:
+        _lock.release()
 
 
 def status() -> dict:
@@ -183,9 +191,9 @@ def _speech_windows(audio: np.ndarray, speech_mask: np.ndarray) -> list[np.ndarr
 
 
 def synthetic_probability(audio: np.ndarray, speech_mask: np.ndarray) -> tuple[float | None, int, str | None]:
-    models = load_models()
+    models = load_models(wait=False)
     if models.classifier is None:
-        return None, 0, models.errors.get("voice", "Voice model disabled")
+        return None, 0, models.errors.get("voice", "Voice model disabled" if models.loaded else "Voice model is still loading")
 
     import torch
 
@@ -215,7 +223,7 @@ def transcription_engine(language: str) -> str | None:
 
 def transcribe(audio: np.ndarray, language: str) -> tuple[str | None, str | None]:
     """Transcribe speech in `language`. Returns (text, engine), or (None, None) if unsupported."""
-    load_models()
+    load_models(wait=False)
     engine = transcription_engine(language)
     try:
         if engine == "whisper":
