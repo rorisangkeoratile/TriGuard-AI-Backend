@@ -94,16 +94,19 @@ async def analyse_voice(
     async def words_check():
         """Transcribe, then check the words for scam tactics. Runs alongside the voice-clone model."""
         if features["speech_seconds"] < 1:
-            return None, None, None
-        text, eng = await asyncio.to_thread(voice_detector.transcribe, audio, audio_language)
-        if text is None and llm.can_transcribe_audio():
-            # No local model for this language (e.g. Sesotho, Setswana): ask the AI model instead.
-            text = await llm.transcribe_with_ai(to_wav_bytes(audio), audio_language)
+            return None, None, None, None
+        text = eng = english = None
+        if audio_language != "en" and llm.can_transcribe_audio():
+            # Local languages: the AI model transcribes better than the small local models (Whisper base is weak
+            # on Afrikaans, and isiZulu etc. have none), and gives an English translation in the same call.
+            text, english = await llm.transcribe_with_ai(to_wav_bytes(audio), audio_language)
             eng = "ai_experimental" if text else None
+        if text is None:
+            text, eng = await asyncio.to_thread(voice_detector.transcribe, audio, audio_language)
         verdict = await analyse_message(text, channel="voice_note", language=language) if text else None
-        return text, eng, verdict
+        return text, eng, english, verdict
 
-    (probability, segments, model_error), (transcript, engine, transcript_risk) = await asyncio.gather(
+    (probability, segments, model_error), (transcript, engine, transcript_english, transcript_risk) = await asyncio.gather(
         asyncio.to_thread(voice_detector.synthetic_probability, audio, speech_mask),
         words_check(),
     )
@@ -184,6 +187,7 @@ async def analyse_voice(
         audio_language=audio_language,
         transcript=transcript,
         transcript_engine=engine,
+        transcript_english=transcript_english,
         transcript_risk=transcript_risk,
     )
     # The transcript check is already in the user's language.

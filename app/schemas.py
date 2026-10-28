@@ -53,6 +53,7 @@ class VoiceAnalysisResponse(RiskAssessment):
     audio_language: str | None = Field(default=None, description="Language spoken in the recording.")
     transcript: str | None = None
     transcript_engine: str | None = None
+    transcript_english: str | None = Field(default=None, description="English translation, for non-English voice notes.")
     transcript_risk: RiskAssessment | None = None
 
 
