@@ -18,7 +18,11 @@ class Settings(BaseSettings):
     # during development. Set CORS_ORIGIN_REGEX= (empty) in production.
     cors_origin_regex: str = r"https?://(localhost|127\.0\.0\.1|192\.168\.\d+\.\d+|10\.\d+\.\d+\.\d+)(:\d+)?"
 
-    # SQLite file for community number reports (Truecaller-style lookups).
+    # Database for everything: community number reports and the mobile app's businesses, staff, devices, calls,
+    # Verify requests and audit log. Empty = a local SQLite file at DATABASE_PATH (no setup). For hosting (e.g.
+    # Cloud Run, where local files are wiped on every deploy) set a PostgreSQL URL, e.g. from Supabase or Neon:
+    #   DATABASE_URL=postgresql://user:password@host:5432/dbname
+    database_url: str | None = None
     database_path: Path = Path("data/triguard.db")
     # Secret for hashing reporter ids. If empty, one is generated and kept in data/.reporter_key.
     reporter_hash_secret: str | None = None
@@ -56,6 +60,19 @@ class Settings(BaseSettings):
 
     # Optional: Google Safe Browsing v4 key for link reputation checks.
     google_safe_browsing_api_key: str | None = None
+
+    # Mobile app sign-in. Access tokens are short-lived; the app swaps its refresh token for new ones.
+    access_token_minutes: int = 15
+    refresh_token_days: int = 30
+
+    @property
+    def sqlalchemy_url(self) -> str:
+        url = self.database_url or f"sqlite:///{self.database_path}"
+        # Supabase/Neon/Heroku hand out postgres:// or postgresql:// URLs; use the psycopg 3 driver for both.
+        for prefix in ("postgres://", "postgresql://"):
+            if url.startswith(prefix):
+                return "postgresql+psycopg://" + url.removeprefix(prefix)
+        return url
 
     @property
     def cors_origin_list(self) -> list[str]:

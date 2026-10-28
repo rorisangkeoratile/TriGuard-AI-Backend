@@ -90,15 +90,26 @@ Offline keywords cover the most common scam phrases only and should be reviewed 
 - Voice notes and screenshots sent to the AI model can't be masked. On Gemini's free tier, only use
   sample data; production needs a paid tier or `LLM_TRANSCRIPTION_ENABLED=false`.
 
-### What's in the database (SQLite, `data/triguard.db`)
+### What's in the database
+
+SQLite (`data/triguard.db`, no setup) by default. To host the backend, set `DATABASE_URL` to a PostgreSQL URL
+(e.g. Supabase or Neon free tier) - the tables are created on startup and the same code runs on both
+(`app/models.py`, SQLAlchemy). Moving existing SQLite data across is a one-off export/import.
 
 | Table | Holds | Why |
 |---|---|---|
 | `number_reports` | Reported number, scam type, channel, optional comment, hashed device id | Truecaller-style lookups |
 | `check_events` | Check type + result level only | Insights dashboard numbers |
+| `businesses`, `branches` | Business name, branches, payment threshold, TriGuard number | Android app |
+| `users` | Staff name, email, role, scrypt password hash, authenticator secret | Sign-in |
+| `auth_sessions`, `login_challenges`, `devices` | SHA-256 hashes of tokens, device name, push token | Sign-in, remote sign-out |
+| `directory_entries` | People and suppliers, verified numbers, backup contact | Call matching, Verify |
+| `calls` | Screening result: risk, reasons, action, voice signal, transcript - **no audio** | Calls and alerts |
+| `verify_requests`, `verify_approvals` | Who asked whom to approve what, and the answers | Guard 3 |
+| `scam_reports` | Numbers businesses reported (pending review) | Shared scam list |
+| `audit_events` | Security events - no IPs, tokens or full numbers | Audit log |
 
-SQLite is enough for the hackathon (one file, no setup). For production, move to PostgreSQL (e.g. Supabase or
-Neon free tier) - the queries are plain SQL in `app/db.py`.
+Retention: transcripts are cleared after 30 days, call records deleted after 180 days, audit events after a year.
 - TriGuard does **not** read WhatsApp, SMS or calls automatically. Users choose what to check:
   record/upload, paste, or **share into TriGuard** from any app (PWA Web Share Target).
 
@@ -133,6 +144,38 @@ or the local Wi-Fi. **Testing on a phone:** run the backend with `--host 0.0.0.0
 (`ipconfig`), and set `VITE_API_URL=http://<PC-IP>:8000` and `npm run dev -- --host`. Note that browsers only
 allow the microphone on `https` or `localhost`, so live recording on a phone needs the deployed (https) site;
 uploading a voice note works either way.
+
+### Android app (business call protection)
+
+The Android app (Kotlin, built in Google AI Studio) uses the endpoints without the `/api/v1` prefix: `/auth/*`,
+`/me`, `/devices`, `/dashboard`, `/calls`, `/request-check`, `/verify/*`, `/directory`, `/scam-reports`, `/audit`.
+The app never talks to the database directly - it calls these endpoints, and the backend reads and writes the
+database.
+
+1. Create the business and the owner's account (asks for a password, then prints the authenticator setup key):
+
+   ```powershell
+   python -m app.cli create-owner --business "SuperSave" --branch "Cape Town Main" --name "Dev Naidoo" --email owner@example.co.za --sample-data
+   python -m app.cli add-user --email thabo@example.co.za --name "Thabo Molefe" --role staff --branch "Cape Town Main"
+   ```
+
+   `--sample-data` adds fictional suppliers and four screened calls so every screen has something to show.
+   Roles: `owner`, `manager`, `finance`, `staff`. `reset-second-step --email ...` replaces a lost authenticator.
+2. Run the server so phones can reach it: `uvicorn app.main:app --reload --host 0.0.0.0 --port 8000`
+3. In the app, set `BASE_URL` (in `app/build.gradle.kts`) - it must end with `/`:
+   - Android emulator: `http://10.0.2.2:8000/`
+   - Phone on the same Wi-Fi: `http://<PC-IP>:8000/` (find the IP with `ipconfig`)
+   - Real users: an `https://` address (hosted backend, or a tunnel such as ngrok while testing)
+
+   Plain `http` needs a debug-only network security config in the app; remove it before release.
+
+Sign-in: `POST /auth/login` → `mfa_token` → `POST /auth/mfa/totp` with the 6-digit code → `access_token` (15 min)
+and `refresh_token` (30 days, single use). Send `Authorization: Bearer <access_token>`; on 401, call
+`/auth/refresh`, and if that also fails, return to sign-in. Five wrong attempts lock sign-in for 15 minutes (429).
+
+Not built yet: passkeys, password-reset emails, voiceprints, consents, privacy export/delete, the supplier
+bank-change workflow, push notifications / `WS /events`, and the screening service that writes calls
+(`app/services/calls.py: record_screened_call`).
 
 ### Outlook add-in ("Check with TriGuard" button)
 
@@ -192,8 +235,13 @@ app/
   main.py               FastAPI app, CORS, startup model loading, capabilities
   config.py             Settings (env / .env)
   schemas.py            Request/response models
-  db.py                 SQLite store for community number reports
-  routers/              voice, messages (+ email, screenshot, links), numbers
+  database.py           Database connection (SQLite or PostgreSQL)
+  models.py             All tables
+  db.py                 Community number reports, check counters, data clean-up
+  mobile_schemas.py     Request/response models for the Android app
+  cli.py                Create businesses and staff accounts
+  routers/              voice, messages (+ email, screenshot, links), numbers,
+                        auth + devices, business (dashboard, calls, directory, ...), verify
   services/
     audio.py            Decode webm/opus/m4a/mp3/wav -> 16 kHz mono (PyAV, no ffmpeg needed)
     voice_detector.py   Deepfake model, Whisper, acoustic features

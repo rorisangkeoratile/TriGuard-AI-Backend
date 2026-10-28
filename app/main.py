@@ -10,7 +10,7 @@ from fastapi.staticfiles import StaticFiles
 from app import db
 from app.config import get_settings
 from app.languages import LANGUAGES
-from app.routers import insights, messages, numbers, voice
+from app.routers import auth, business, insights, messages, numbers, verify, voice
 from app.services import llm, voice_detector
 from app.services.privacy import AccessLogFilter
 
@@ -50,6 +50,11 @@ app.include_router(voice.router)
 app.include_router(messages.router)
 app.include_router(numbers.router)
 app.include_router(insights.router)
+# Android app (business call protection). Paths follow the app's API contract, without the /api/v1 prefix.
+app.include_router(auth.router)
+app.include_router(auth.devices_router)
+app.include_router(business.router)
+app.include_router(verify.router)
 
 # Outlook add-in ("Check with TriGuard" button). Outlook only loads add-ins over https, so for this, run the
 # server with --ssl-keyfile/--ssl-certfile (see README).
