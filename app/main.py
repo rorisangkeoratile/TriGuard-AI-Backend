@@ -1,9 +1,11 @@
 import asyncio
 import logging
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 
 from app import db
 from app.config import get_settings
@@ -48,6 +50,12 @@ app.include_router(voice.router)
 app.include_router(messages.router)
 app.include_router(numbers.router)
 app.include_router(insights.router)
+
+# Outlook add-in ("Check with TriGuard" button). Outlook only loads add-ins over https, so for this, run the
+# server with --ssl-keyfile/--ssl-certfile (see README).
+ADDIN_DIR = Path(__file__).resolve().parent.parent / "outlook-addin"
+if ADDIN_DIR.is_dir():
+    app.mount("/addin", StaticFiles(directory=ADDIN_DIR), name="outlook-addin")
 
 
 @app.get("/health", tags=["system"])

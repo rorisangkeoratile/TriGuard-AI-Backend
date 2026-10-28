@@ -134,6 +134,23 @@ or the local Wi-Fi. **Testing on a phone:** run the backend with `--host 0.0.0.0
 allow the microphone on `https` or `localhost`, so live recording on a phone needs the deployed (https) site;
 uploading a voice note works either way.
 
+### Outlook add-in ("Check with TriGuard" button)
+
+`outlook-addin/` holds a read-mode Outlook add-in that sends the open email (headers with SPF/DKIM/DMARC results,
+text and attachment names) to `/api/v1/email/analyze` and shows the verdict. The backend serves it at `/addin/`.
+Outlook only loads add-ins over https:
+
+```powershell
+npx office-addin-dev-certs install    # once: creates and trusts a localhost certificate
+$env:VOICE_MODEL_ENABLED="false"; $env:TRANSCRIPTION_ENABLED="false"   # email checks don't need the voice models
+uvicorn app.main:app --port 3000 --ssl-keyfile "$HOME\.office-addin-dev-certs\localhost.key" --ssl-certfile "$HOME\.office-addin-dev-certs\localhost.crt"
+```
+
+Then in Outlook on the web (or new Outlook), open https://aka.ms/olksideload > **My add-ins** > **Add a custom
+add-in** > **Add from file** and pick `outlook-addin/manifest.xml`. Open an email and click **Check with TriGuard**
+(under the **Apps** button or the "..." menu). For an organisation, IT deploys the same manifest, with the hosted
+https address in place of `https://localhost:3000`, from the Microsoft 365 admin centre.
+
 The first start downloads the voice model (~380 MB) and Whisper base (~290 MB) from Hugging Face into
 your cache; the API is usable immediately and `/api/v1/capabilities` shows when the models are ready.
 

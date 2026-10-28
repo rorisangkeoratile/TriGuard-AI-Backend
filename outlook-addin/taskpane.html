@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>TriGuard AI</title>
+  <script src="https://appsforoffice.microsoft.com/lib/1/hosted/office.js"></script>
+  <style>
+    :root { --brand: #5b2bd9; --ink: #1d1b2c; --muted: #5f5b73; --line: #e4e0f0;
+            --high: #c62828; --medium: #b26a00; --low: #2e7d32; }
+    * { box-sizing: border-box; }
+    body { margin: 0; padding: 16px; font: 14px/1.45 "Segoe UI", system-ui, sans-serif; color: var(--ink); background: #fff; }
+    h1 { font-size: 16px; margin: 0 0 4px; } h1 span { color: var(--brand); }
+    .muted { color: var(--muted); font-size: 12px; }
+    button { width: 100%; margin: 12px 0; padding: 10px; border: 0; border-radius: 6px; background: var(--brand);
+             color: #fff; font: 600 14px "Segoe UI", system-ui, sans-serif; cursor: pointer; }
+    button:disabled { opacity: .6; cursor: wait; }
+    .verdict { border-left: 5px solid var(--muted); padding: 8px 12px; background: #f7f5fc; border-radius: 4px; }
+    .verdict.high { border-color: var(--high); } .verdict.medium { border-color: var(--medium); } .verdict.low { border-color: var(--low); }
+    .level { font-weight: 700; text-transform: uppercase; font-size: 12px; letter-spacing: .04em; }
+    .high .level { color: var(--high); } .medium .level { color: var(--medium); } .low .level { color: var(--low); }
+    .headline { font-weight: 600; font-size: 15px; margin: 2px 0 4px; }
+    h2 { font-size: 13px; margin: 14px 0 4px; }
+    ul { margin: 0; padding-left: 18px; } li { margin: 3px 0; }
+    .err { color: var(--high); }
+  </style>
+</head>
+<body>
+  <h1>Tri<span>Guard</span> AI</h1>
+  <div class="muted">Checks this email for phishing, spoofed senders and impersonation scams.</div>
+  <button id="check" type="button" disabled>Check this email</button>
+  <div id="out" aria-live="polite"></div>
+  <p class="muted">Only this email is sent, only when you click. It is checked in memory and not stored. ID, card,
+    account and phone numbers are masked before any AI sees the text.</p>
+  <script src="taskpane.js"></script>
+</body>
+</html>
