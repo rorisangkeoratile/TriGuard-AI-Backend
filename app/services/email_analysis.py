@@ -1,6 +1,7 @@
 """Email-specific checks: sender spoofing, failed SPF/DKIM/DMARC, Reply-To tricks and risky attachments."""
 
 import re
+from difflib import SequenceMatcher
 from email import policy
 from email.message import EmailMessage
 from email.parser import BytesParser
@@ -75,6 +76,59 @@ def parse_email(raw: bytes) -> tuple[EmailMessage, str, list[tuple[str, str]]]:
 
 def _domain(address: str) -> str:
     return address.rsplit("@", 1)[-1].lower().strip(">") if "@" in address else ""
+
+
+# Business email compromise: a "senior executive" asking for a payment, often followed by a video call.
+EXECUTIVE = re.compile(
+    r"\b(ceo|cfo|coo|chief (executive|financial|operating) officer|managing director|financial director|"
+    r"finance director|group (ceo|cfo)|chairman|chairperson|chief executive|head of finance)\b", re.I)
+MEETING = re.compile(
+    r"teams\.microsoft\.com|teams\.live\.com|zoom\.us/(j|my)/|meet\.google\.com/|webex\.com/(meet|join)|"
+    r"\b(teams|zoom|google meet|webex) (call|meeting)\b|\bvideo (call|conference|meeting)\b", re.I)
+
+
+def _lookalike(sender: str, own: str) -> bool:
+    """tfg-co.za or tfgroup.co for a company at tfg.co.za: similar to the company's domain but not it."""
+    if not sender or not own or sender == own:
+        return False
+    name = own.split(".")[0]
+    return (len(name) >= 3 and name in sender) or SequenceMatcher(None, sender, own).ratio() >= 0.8
+
+
+def impersonation_indicators(msg: EmailMessage, body: str, recipient_domain: str | None) -> list[Indicator]:
+    """Executive impersonation and "let's confirm on a call" - the pattern behind the 2024 Arup deepfake fraud."""
+    indicators: list[Indicator] = []
+    display_name, from_addr = parseaddr(str(msg.get("From", "")))
+    sender = _registered_domain(_domain(from_addr)) if from_addr else ""
+    own = _registered_domain(recipient_domain.lower().strip()) if recipient_domain else ""
+    own_is_company = bool(own) and own not in FREE_MAIL
+    claims_exec = EXECUTIVE.search(display_name) or EXECUTIVE.search(body[-600:])  # name or signature
+
+    if own_is_company and _lookalike(sender, own):
+        indicators.append(Indicator(
+            code="lookalike_domain", title="Sent from a look-alike of your company's domain",
+            detail=f"It comes from {sender}, which looks like your company's {own} but isn't. "
+                   "Criminals register look-alike domains to impersonate staff.",
+            weight=0.75, source="email_auth"))
+    if claims_exec and sender:
+        if sender in FREE_MAIL:
+            indicators.append(Indicator(
+                code="executive_freemail", title="Claims to be a senior executive, but uses a free email account",
+                detail=f"A CEO or CFO wouldn't ask for payments from {sender}. This is the classic CEO-fraud set-up.",
+                weight=0.7, source="email_auth"))
+        elif own_is_company and sender != own:
+            indicators.append(Indicator(
+                code="executive_external", title="Claims to be a senior executive, but comes from outside your company",
+                detail=f"It's signed as a senior person, but it's from {sender}, not your company's {own}.",
+                weight=0.65, source="email_auth"))
+    if MEETING.search(body):
+        indicators.append(Indicator(
+            code="meeting_link", title="Wants to confirm over a video call it set up",
+            detail="A Teams or Zoom call set up by the sender is not proof: deepfake video and voice can impersonate "
+                   "anyone on a call. In 2024 an Arup employee paid about US$25 million after a call like this. "
+                   "Verify by calling the person on a number you already have.",
+            weight=0.4, source="email_auth"))
+    return indicators
 
 
 def email_indicators(msg: EmailMessage, links: list[tuple[str, str]]) -> list[Indicator]:

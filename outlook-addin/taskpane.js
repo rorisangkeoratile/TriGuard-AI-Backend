@@ -1,7 +1,10 @@
 // Reads the open email and sends it to TriGuard's email check (same server that serves this page).
 const API = '/api/v1/email/analyze'
+// The TriGuard app, where a risky email becomes a payment hold that needs a call-back and PIN to release.
+const APP_URL = 'https://triguard-ai-frontend.onrender.com/app/check'
 // The server's five levels, shown as High / Medium / Low. TriGuard never says "safe".
 const LEVELS = { critical: 'high', high: 'high', medium: 'medium', low: 'low', safe: 'low' }
+let lastEmail = null
 
 const $ = id => document.getElementById(id)
 
@@ -43,12 +46,41 @@ function list(title, items) {
   return [el('h2', title), ul]
 }
 
+// Opens the TriGuard app with this email ready to check. The text travels in the URL fragment (#), which browsers
+// never send to the web server, so it doesn't end up in hosting logs.
+function holdPayment() {
+  const url = `${APP_URL}#from=outlook&text=${encodeURIComponent(lastEmail || '')}`
+  if (Office.context.ui && Office.context.ui.openBrowserWindow) Office.context.ui.openBrowserWindow(url)
+  else window.open(url, '_blank', 'noopener')
+}
+
 function show(r) {
   const level = LEVELS[r.risk_level] || 'medium'
+  const codes = new Set((r.indicators || []).map(i => i.code))
+  const parts = []
+  if (level === 'high') {
+    const stop = el('div', '', 'stop')
+    stop.append(el('div', 'STOP', 'stop-title'),
+      el('div', 'Don’t pay, reply, open links or join a meeting from this email until you’ve called the person on a number you already have.'))
+    parts.push(stop)
+  }
+  if (codes.has('meeting_link')) {
+    const call = el('div', '', 'callout')
+    call.append(el('b', 'A video call is not proof.'),
+      el('div', 'Deepfakes can copy a face and voice live on Teams or Zoom. Verify by phoning the person on a number you already have, not through a meeting from this email.'))
+    parts.push(call)
+  }
   const box = el('div', '', `verdict ${level}`)
   box.append(el('div', `${level} risk · ${r.risk_score}/100`, 'level'), el('div', r.headline, 'headline'), el('div', r.summary))
+  parts.push(box)
+  if (level !== 'low') {
+    const hold = el('button', 'Put the payment on hold in TriGuard', 'hold')
+    hold.type = 'button'
+    hold.addEventListener('click', holdPayment)
+    parts.push(hold, el('p', 'Opens a check in TriGuard. The payment can only be released after a confirmed call-back and your payment PIN.', 'muted'))
+  }
   const reasons = [...new Set((r.indicators || []).map(i => i.title))]
-  $('out').replaceChildren(box, ...list('Why', reasons), ...list('What to do', r.advice || []),
+  $('out').replaceChildren(...parts, ...list('Why', reasons), ...list('What to do', r.advice || []),
     el('p', r.disclaimer, 'muted'))
 }
 
@@ -58,9 +90,16 @@ async function check() {
   btn.textContent = 'Checking…'
   $('out').replaceChildren()
   try {
+    const item = Office.context.mailbox.item
+    const raw = await rawEmail(item)
+    const body = raw.split(/\r?\n\r?\n/).slice(1).join('\n\n')
+    lastEmail = `${item.subject ? `Subject: ${item.subject}\n` : ''}${body}`.slice(0, 1500)
     const form = new FormData()
-    form.append('raw', await rawEmail(Office.context.mailbox.item))
+    form.append('raw', raw)
     form.append('language', 'auto')
+    // Only the domain of the user's own address, to spot look-alike domains and outsiders posing as executives.
+    const own = (Office.context.mailbox.userProfile.emailAddress || '').split('@')[1]
+    if (own) form.append('recipient_domain', own)
     const res = await fetch(API, { method: 'POST', body: form })
     const data = await res.json().catch(() => ({}))
     if (!res.ok) throw new Error(typeof data.detail === 'string' ? data.detail : `The TriGuard server answered ${res.status}.`)

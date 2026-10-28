@@ -169,6 +169,23 @@ def test_email_spoofing(client):
     assert r["risk_level"] == "critical"
 
 
+def test_ceo_fraud_email_with_video_call(client):
+    # The Arup pattern: a fake executive asks for a secret payment and offers a video call to "confirm".
+    raw = (
+        "From: Group CFO <cfo.office@tfg-finance.co.za>\r\nSubject: Confidential acquisition payment\r\n\r\n"
+        "I need you to process a confidential transfer today. Let's confirm on a Teams call: "
+        "https://teams.microsoft.com/l/meetup-join/abc\r\n\r\nRegards, Group CFO"
+    )
+    r = client.post("/api/v1/email/analyze", data={"raw": raw, "recipient_domain": "tfg.co.za"}).json()
+    codes = {i["code"] for i in r["indicators"]}
+    assert {"lookalike_domain", "executive_external", "meeting_link"} <= codes
+    assert r["risk_level"] in ("high", "critical")
+    # Without the company domain (e.g. a personal Outlook account) the free-mail and call checks still work.
+    raw = raw.replace("cfo.office@tfg-finance.co.za", "groupcfo.office@gmail.com")
+    codes = {i["code"] for i in client.post("/api/v1/email/analyze", data={"raw": raw}).json()["indicators"]}
+    assert {"executive_freemail", "meeting_link"} <= codes
+
+
 def test_number_lookup_and_report(client):
     seeded = client.get("/api/v1/numbers/lookup", params={"number": "071 000 0001"}).json()
     assert seeded["number"] == "+27710000001"

@@ -6,7 +6,7 @@ from app.languages import normalise_language
 from app.routers.uploads import read_upload
 from app.schemas import LinkCheckRequest, LinkCheckResult, MessageAnalysisRequest, MessageAnalysisResponse
 from app.services import llm
-from app.services.email_analysis import email_indicators, parse_email
+from app.services.email_analysis import email_indicators, impersonation_indicators, parse_email
 from app.services.links import check_link
 from app.services.localize import localize
 from app.services.message_analysis import analyse_message
@@ -53,8 +53,12 @@ async def analyze_email(
     file: UploadFile | None = File(None, description="A saved email (.eml) - includes headers for spoofing checks."),
     raw: str | None = Form(None, description="Raw email source ('Show original' in Gmail), or just the email text."),
     language: str = Form("auto", description="Result language, or 'auto' for the email's own language."),
+    recipient_domain: str | None = Form(None, max_length=253, description=(
+        "The checking user's own email domain (not their address), to spot look-alike domains and outsiders "
+        "posing as executives.")),
 ) -> MessageAnalysisResponse:
-    """Check an email for phishing: spoofed sender, failed SPF/DKIM/DMARC, lying links, dangerous attachments."""
+    """Check an email for phishing and CEO fraud: spoofed sender, failed SPF/DKIM/DMARC, look-alike domains,
+    fake executives, "let's confirm on a video call", lying links, dangerous attachments."""
     if file is not None:
         data = await read_upload(file)
     elif raw:
@@ -76,7 +80,8 @@ async def analyze_email(
         sender=str(msg.get("From")) if has_headers else None,
         language=language,
         kind="email",
-        extra_indicators=email_indicators(msg, links) if has_headers else [],
+        extra_indicators=(email_indicators(msg, links) if has_headers else [])
+        + impersonation_indicators(msg, text, recipient_domain),
     ))
 
 
