@@ -16,7 +16,7 @@ def client(tmp_path_factory, monkeypatch_module):
     monkeypatch_module.setenv("LLM_ENABLED", "false")
     monkeypatch_module.setenv("MMS_ENABLED", "false")
     # Tests must not depend on the developer's real .env.
-    for key in ("ANTHROPIC_API_KEY", "GEMINI_API_KEY", "GOOGLE_API_KEY"):
+    for key in ("ANTHROPIC_API_KEY", "GEMINI_API_KEY", "GOOGLE_API_KEY", "DATABASE_URL"):
         monkeypatch_module.setenv(key, "")
     from app.config import get_settings
 

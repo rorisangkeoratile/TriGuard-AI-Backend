@@ -20,6 +20,8 @@ class Settings(BaseSettings):
 
     # SQLite file for community number reports (Truecaller-style lookups).
     database_path: Path = Path("data/triguard.db")
+    # Postgres connection string (e.g. Render's "External Database URL"). When set, it's used instead of SQLite.
+    database_url: str | None = None
     # Secret for hashing reporter ids. If empty, one is generated and kept in data/.reporter_key.
     reporter_hash_secret: str | None = None
     seed_demo_data: bool = True

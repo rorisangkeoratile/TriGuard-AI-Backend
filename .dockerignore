@@ -1,0 +1,9 @@
+.env
+.env.*
+!.env.example
+.venv/
+data/
+models/
+.git/
+.pytest_cache/
+**/__pycache__/

@@ -1,4 +1,5 @@
-"""Tiny SQLite store for community scam reports and anonymous check counts.
+"""Tiny store for community scam reports and anonymous check counts: SQLite locally, Postgres when
+DATABASE_URL is set (the hosted deployment).
 
 Only reported numbers and "a check happened, with this result" counters are stored - never user messages,
 audio, screenshots or the numbers people look up.
@@ -55,9 +56,37 @@ DEMO_REPORTS = [
 ]
 
 
+class _Postgres:
+    """Gives a psycopg connection the parts of the sqlite3 interface this module uses, so the queries below
+    (plain SQL, dates stored as ISO text) run unchanged on both."""
+
+    def __init__(self, conn):
+        self._conn = conn
+
+    def execute(self, sql: str, params=()):
+        return self._conn.execute(sql.replace("?", "%s"), params)
+
+    def executemany(self, sql: str, rows) -> None:
+        with self._conn.cursor() as cur:
+            cur.executemany(sql.replace("?", "%s"), rows)
+
+    def executescript(self, script: str) -> None:
+        script = script.replace("INTEGER PRIMARY KEY AUTOINCREMENT", "BIGSERIAL PRIMARY KEY")
+        for statement in filter(str.strip, script.split(";")):
+            self._conn.execute(statement)
+
+
 @contextmanager
 def connect():
-    path = get_settings().database_path
+    settings = get_settings()
+    if settings.database_url:
+        import psycopg
+        from psycopg.rows import dict_row
+
+        with psycopg.connect(settings.database_url, row_factory=dict_row, connect_timeout=10) as conn:
+            yield _Postgres(conn)  # commits on success, rolls back on error
+        return
+    path = settings.database_path
     path.parent.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(path)
     conn.row_factory = sqlite3.Row
@@ -165,7 +194,7 @@ def record_check(kind: str, risk_level: str, scam_type: str | None = None) -> No
                 "INSERT INTO check_events (kind, risk_level, scam_type, created_at) VALUES (?, ?, ?, ?)",
                 (kind, risk_level, scam_type, datetime.now(UTC).isoformat()),
             )
-    except sqlite3.Error:
+    except Exception:
         log.exception("Couldn't record check stats")  # stats must never break a check
 
 
@@ -175,11 +204,14 @@ def insight_counts() -> dict:
     week = (now - timedelta(days=7)).isoformat()
     month = (now - timedelta(days=30)).isoformat()
     with connect() as conn:
-        checks_today = conn.execute("SELECT COUNT(*) FROM check_events WHERE created_at >= ?", (today,)).fetchone()[0]
+        checks_today = conn.execute(
+            "SELECT COUNT(*) AS n FROM check_events WHERE created_at >= ?", (today,)).fetchone()["n"]
         scams_today = conn.execute(
-            "SELECT COUNT(*) FROM check_events WHERE created_at >= ? AND risk_level IN ('high', 'critical')", (today,)
-        ).fetchone()[0]
-        reports_week = conn.execute("SELECT COUNT(*) FROM number_reports WHERE created_at >= ?", (week,)).fetchone()[0]
+            "SELECT COUNT(*) AS n FROM check_events WHERE created_at >= ? AND risk_level IN ('high', 'critical')",
+            (today,),
+        ).fetchone()["n"]
+        reports_week = conn.execute(
+            "SELECT COUNT(*) AS n FROM number_reports WHERE created_at >= ?", (week,)).fetchone()["n"]
         categories = conn.execute(
             "SELECT category, COUNT(*) AS total FROM number_reports WHERE created_at >= ?"
             " GROUP BY category ORDER BY total DESC",

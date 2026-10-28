@@ -11,6 +11,7 @@ anthropic>=2.0         # Claude (paid) - optional alternative
 numpy>=2.0
 av>=13.0
 phonenumbers>=8.13
+psycopg[binary]>=3.2   # Postgres, used when DATABASE_URL is set (hosted deployment)
 
 # Voice deepfake model + transcription (CPU). Install torch from the CPU index:
 #   pip install torch --index-url https://download.pytorch.org/whl/cpu

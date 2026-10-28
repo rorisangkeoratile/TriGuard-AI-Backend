@@ -97,8 +97,23 @@ Offline keywords cover the most common scam phrases only and should be reviewed 
 | `number_reports` | Reported number, scam type, channel, optional comment, hashed device id | Truecaller-style lookups |
 | `check_events` | Check type + result level only | Insights dashboard numbers |
 
-SQLite is enough for the hackathon (one file, no setup). For production, move to PostgreSQL (e.g. Supabase or
-Neon free tier) - the queries are plain SQL in `app/db.py`.
+Locally this is SQLite (one file, no setup). Set `DATABASE_URL` to a Postgres connection string (e.g. Render's
+free Postgres "External Database URL") and the same tables are used there instead - the deployment does this,
+because a Hugging Face Space's disk is wiped when it restarts.
+
+### Deploying (Hugging Face Spaces + Render)
+
+- **Backend → Hugging Face Space (Docker, free CPU with 16 GB RAM, enough for the voice models).** Add to `.env`:
+  `HF_TOKEN` (a *write* token from huggingface.co/settings/tokens), `DEPLOY_DATABASE_URL` (the hosted Postgres;
+  not `DATABASE_URL`, so the local server keeps using SQLite), and once the frontend is live `FRONTEND_URL`. Then run `.venv\Scripts\python.exe deploy\deploy_hf.py`. It creates the Space, stores
+  `GEMINI_API_KEY`, `DATABASE_URL` and `REPORTER_HASH_SECRET` as private Space secrets, sets CORS to the
+  frontend URL, and uploads the code (never `.env`, `data/` or `models/`). The build takes about 10 minutes.
+- **Database → Render Postgres (free).** Copy its *External Database URL* into `DEPLOY_DATABASE_URL`.
+- **Frontend → Render Static Site** from the frontend repo: build `npm ci && npm run build`, publish `dist`,
+  env `VITE_USE_MOCK=true` and `VITE_API_URL=https://<owner>-triguard-ai.hf.space`, and a rewrite
+  `/*` → `/index.html`.
+- **Outlook add-in:** the deploy writes `outlook-addin/manifest-live.xml`, which points at the Space, so the
+  add-in works without the localhost certificate.
 - TriGuard does **not** read WhatsApp, SMS or calls automatically. Users choose what to check:
   record/upload, paste, or **share into TriGuard** from any app (PWA Web Share Target).
 
