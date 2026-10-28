@@ -180,6 +180,13 @@ def test_ceo_fraud_email_with_video_call(client):
     codes = {i["code"] for i in r["indicators"]}
     assert {"lookalike_domain", "executive_external", "meeting_link"} <= codes
     assert r["risk_level"] in ("high", "critical")
+    # Microsoft 365 marks mail from inside the organisation as internal: never call that "outside your company",
+    # even when the user's sign-in domain differs. The request itself is still flagged (a hijacked account).
+    internal = "X-MS-Exchange-Organization-AuthAs: Internal\r\n" + raw
+    r = client.post("/api/v1/email/analyze", data={"raw": internal, "recipient_domain": "uni.onmicrosoft.com"}).json()
+    codes = {i["code"] for i in r["indicators"]}
+    assert "executive_external" not in codes and "lookalike_domain" not in codes
+    assert "meeting_link" in codes
     # Without the company domain (e.g. a personal Outlook account) the free-mail and call checks still work.
     raw = raw.replace("cfo.office@tfg-finance.co.za", "groupcfo.office@gmail.com")
     codes = {i["code"] for i in client.post("/api/v1/email/analyze", data={"raw": raw}).json()["indicators"]}

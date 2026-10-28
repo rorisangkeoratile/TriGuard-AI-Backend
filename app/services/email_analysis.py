@@ -101,7 +101,14 @@ def impersonation_indicators(msg: EmailMessage, body: str, recipient_domain: str
     display_name, from_addr = parseaddr(str(msg.get("From", "")))
     sender = _registered_domain(_domain(from_addr)) if from_addr else ""
     own = _registered_domain(recipient_domain.lower().strip()) if recipient_domain else ""
-    own_is_company = bool(own) and own not in FREE_MAIL
+    # The user's sign-in domain (e.g. *.onmicrosoft.com) can differ from the domain their organisation mails from.
+    own_is_company = bool(own) and own not in FREE_MAIL and own != "onmicrosoft.com"
+    # Microsoft 365 stamps mail sent from inside the organisation as internal, and strips this stamp from outside
+    # mail, so it can't be faked by an external sender. It's the reliable "same organisation" test.
+    internal = any(str(msg.get(h, "")).strip().lower() == "internal"
+                   for h in ("X-MS-Exchange-Organization-AuthAs", "X-MS-Exchange-CrossTenant-AuthAs"))
+    if internal:
+        own_is_company = False
     claims_exec = EXECUTIVE.search(display_name) or EXECUTIVE.search(body[-600:])  # name or signature
 
     if own_is_company and _lookalike(sender, own):

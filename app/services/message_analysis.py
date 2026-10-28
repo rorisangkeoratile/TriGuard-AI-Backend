@@ -1,6 +1,7 @@
 """Combines the rule engine, link checks and the AI model into one verdict for a message, email or screenshot."""
 
 import asyncio
+import re
 
 from app.languages import AUTO, LANGUAGES, normalise_language
 from app.schemas import Indicator, MessageAnalysisResponse, RiskLevel
@@ -10,6 +11,23 @@ from app.services.localize import localize
 from app.services.scam_rules import extract_entities, run_rules
 
 SEVERITY_WEIGHT = {"low": 0.2, "medium": 0.4, "high": 0.65}
+
+# What a warning is about, so the AI's red flags don't repeat what the rules already said in other words.
+TOPICS = {
+    "secrecy": re.compile(r"secre|confidential|between us|tell (anyone|no one|nobody)", re.I),
+    "urgency": re.compile(r"urgen|immediate|pressure|rush|deadline|act fast", re.I),
+    "money": re.compile(r"money|transfer|payment|\bpay\b|funds|\beft\b", re.I),
+    "meeting": re.compile(r"video|meeting|teams|zoom", re.I),
+    "sender": re.compile(r"sender|e-?mail (address|account)|domain|free email|outside your", re.I),
+    "link": re.compile(r"(?<!call )link|url|website", re.I),
+    "bank": re.compile(r"bank(ing)? details|account details|new account|changed? (bank|account)", re.I),
+    "credentials": re.compile(r"\botp\b|\bpin\b|password", re.I),
+    "approval": re.compile(r"approv|bypass|skip (the )?(normal|usual)|procedure", re.I),
+}
+
+
+def _topics(text: str) -> set[str]:
+    return {name for name, rx in TOPICS.items() if rx.search(text)}
 
 
 async def analyse_message(
@@ -59,7 +77,13 @@ async def analyse_message(
     rules_score = risk.score_from_indicators(indicators)
 
     if verdict:
+        # Show each warning once: skip an AI flag when the rules (or an earlier AI flag) already cover its topic.
+        covered = set().union(*(_topics(i.title) for i in indicators))
         for flag in verdict.red_flags:
+            topics = _topics(flag.title)
+            if topics and topics <= covered:
+                continue
+            covered |= topics
             indicators.append(Indicator(
                 code="ai_" + flag.severity, title=flag.title, detail=flag.detail,
                 weight=SEVERITY_WEIGHT[flag.severity], source="llm",
