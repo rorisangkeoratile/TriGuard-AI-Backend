@@ -21,10 +21,18 @@ class CallContext:
     urgent_pressure: bool = False
     asked_for_secrecy: bool = False
     asked_for_otp_or_banking: bool = False
+    # Payment checks for finance staff. They describe the payment request, not a person, so nothing is stored.
+    new_bank_details: bool = False
+    skip_approval: bool = False
     claims_to_be: str | None = None  # family, bank, employer, government, police, other
 
 
 CONTEXT_RULES = (
+    ("new_bank_details", "Asked you to pay into new or changed bank details",
+     "Changing a supplier's bank account by call or voice note is the classic payment fraud. "
+     "Confirm the account on a number you already have before paying.", 0.6),
+    ("skip_approval", "Asked you to skip the normal approval process",
+     "A real executive can wait for the usual sign-off. 'Just this once, skip the process' is a fraud signal.", 0.5),
     ("asked_for_otp_or_banking", "Asked for an OTP, PIN or banking details",
      "No genuine caller - not even your bank - needs your OTP or PIN.", 0.7),
     ("asked_for_money", "Asked you to send money",

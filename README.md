@@ -80,6 +80,15 @@ Offline keywords cover the most common scam phrases only and should be reviewed 
 - For the Insights screen, each check adds an anonymous counter row (`kind`, `risk_level`, `scam_type`,
   time) - never the message, audio or number that was checked.
 - A user's **check history stays on their phone** (browser storage in the PWA), not on the server.
+- ID, card, bank account and phone numbers and email names are **masked before text is sent to the AI
+  provider** and before report comments are saved (`app/services/privacy.py`). Fake domains and amounts are
+  kept, because they're scam signals. Names can't be reliably detected, so free text is still treated as
+  personal information.
+- Server logs contain **no IP addresses and no query strings** (so no looked-up numbers).
+- Reporter ids are hashed with a secret key (HMAC), so they can't be reversed by trying every IP address.
+- Retention: community reports are deleted after 12 months and Insights counters after 90 days.
+- Voice notes and screenshots sent to the AI model can't be masked. On Gemini's free tier, only use
+  sample data; production needs a paid tier or `LLM_TRANSCRIPTION_ENABLED=false`.
 
 ### What's in the database (SQLite, `data/triguard.db`)
 

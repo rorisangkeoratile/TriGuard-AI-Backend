@@ -5,7 +5,9 @@ audio, screenshots or the numbers people look up.
 """
 
 import hashlib
+import hmac
 import logging
+import secrets
 import sqlite3
 from contextlib import contextmanager
 from datetime import UTC, datetime, timedelta
@@ -66,6 +68,20 @@ def connect():
         conn.close()
 
 
+# How long data is kept (POPIA s14: no longer than needed). Old reports also stop flagging recycled numbers.
+REPORT_RETENTION_DAYS = 365
+CHECK_EVENT_RETENTION_DAYS = 90
+
+
+def purge_old_data() -> None:
+    now = datetime.now(UTC)
+    with connect() as conn:
+        conn.execute("DELETE FROM number_reports WHERE source != 'demo' AND created_at < ?",
+                     ((now - timedelta(days=REPORT_RETENTION_DAYS)).isoformat(),))
+        conn.execute("DELETE FROM check_events WHERE created_at < ?",
+                     ((now - timedelta(days=CHECK_EVENT_RETENTION_DAYS)).isoformat(),))
+
+
 def init_db() -> None:
     with connect() as conn:
         conn.executescript(SCHEMA)
@@ -81,9 +97,22 @@ def init_db() -> None:
                 )
 
 
+def _hash_key() -> bytes:
+    """Secret key for reporter hashes, created once next to the database. Without a secret, a plain hash of an
+    IP address could be reversed by trying all ~4 billion IPv4 addresses."""
+    settings = get_settings()
+    if settings.reporter_hash_secret:
+        return settings.reporter_hash_secret.encode()
+    path = settings.database_path.parent / ".reporter_key"
+    if not path.exists():
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(secrets.token_hex(32))
+    return path.read_text().strip().encode()
+
+
 def hash_reporter(reporter_id: str | None, client_ip: str | None) -> str:
     raw = reporter_id or client_ip or "anonymous"
-    return hashlib.sha256(raw.encode()).hexdigest()[:32]
+    return hmac.new(_hash_key(), raw.encode(), hashlib.sha256).hexdigest()[:32]
 
 
 def add_report(number: str, category: str, channel: str, comment: str | None, reporter_hash: str) -> bool:

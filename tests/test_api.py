@@ -230,3 +230,33 @@ def test_cors_allows_the_pwa(client, origin):
 def test_cors_blocks_unknown_sites(client):
     res = client.get("/health", headers={"Origin": "https://evil.example"})
     assert "access-control-allow-origin" not in res.headers
+
+
+def test_identifiers_are_masked_before_leaving_the_server():
+    from app.services.privacy import redact
+
+    out = redact("Pay acc 62812345678, ID 9001015800087, card 4111 1111 1111 1111, call 082 123 4567, "
+                 "email ralph@tfg-pay.co.za, amount R1500000")
+    for secret in ("62812345678", "9001015800087", "4111", "123 4567", "ralph@"):
+        assert secret not in out
+    assert "tfg-pay.co.za" in out and "R1500000" in out  # scam signals stay
+
+
+def test_report_comments_are_stored_without_identifiers(client):
+    body = {"number": "0839990002", "category": "impersonation_bank", "reporter_id": "device-9",
+            "comment": "Asked me to pay into account 62812345678 and call 082 123 4567"}
+    client.post("/api/v1/numbers/report", json=body)
+    comment = client.get("/api/v1/numbers/lookup", params={"number": "0839990002"}).json()["recent_comments"][0]
+    assert "62812345678" not in comment and "123 4567" not in comment
+
+
+def test_access_log_drops_ip_and_looked_up_number():
+    import logging
+
+    from app.services.privacy import AccessLogFilter
+
+    record = logging.LogRecord("uvicorn.access", logging.INFO, "", 0, '%s - "%s %s HTTP/%s" %d',
+                               ("10.0.0.5:5000", "GET", "/api/v1/numbers/lookup?number=0821234567", "1.1", 200), None)
+    AccessLogFilter().filter(record)
+    line = record.getMessage()
+    assert "0821234567" not in line and "10.0.0.5" not in line

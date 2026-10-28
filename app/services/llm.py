@@ -17,6 +17,7 @@ from pydantic import BaseModel, ConfigDict, ValidationError
 
 from app.config import get_settings
 from app.languages import AUTO, LANGUAGES, language_name
+from app.services.privacy import redact
 
 log = logging.getLogger(__name__)
 
@@ -289,9 +290,11 @@ async def analyse_message_with_ai(
     if not llm_available():
         return None
 
+    # POPIA: the AI provider doesn't need full ID, card, account or phone numbers to spot a scam.
+    text = redact(text) if text else text
     details = [f"Channel: {channel}"]
     if sender:
-        details.append(f"Sender shown: {sender}")
+        details.append(f"Sender shown: {redact(sender)}")
     if rule_findings:
         details.append("Our automatic pattern checks flagged: " + "; ".join(rule_findings))
     task = (

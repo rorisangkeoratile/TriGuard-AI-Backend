@@ -14,6 +14,7 @@ from app.schemas import (
 )
 from app.services.localize import localize
 from app.services.numbers import InvalidNumberError, category_label, lookup, normalise
+from app.services.privacy import redact
 
 router = APIRouter(prefix="/api/v1/numbers", tags=["numbers"])
 
@@ -43,7 +44,7 @@ def report_number(body: NumberReportRequest, request: Request) -> NumberReportRe
 
     client_ip = request.client.host if request.client else None
     accepted = db.add_report(
-        e164, body.category.value, body.channel, (body.comment or "").strip() or None,
+        e164, body.category.value, body.channel, redact((body.comment or "").strip()) or None,
         db.hash_reporter(body.reporter_id, client_ip),
     )
     return NumberReportResponse(

@@ -10,13 +10,16 @@ from app.config import get_settings
 from app.languages import LANGUAGES
 from app.routers import insights, messages, numbers, voice
 from app.services import llm, voice_detector
+from app.services.privacy import AccessLogFilter
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
+logging.getLogger("uvicorn.access").addFilter(AccessLogFilter())
 
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     db.init_db()
+    db.purge_old_data()
     # Load the ML models in the background so the API is available immediately.
     loader = asyncio.create_task(asyncio.to_thread(voice_detector.load_models))
     yield

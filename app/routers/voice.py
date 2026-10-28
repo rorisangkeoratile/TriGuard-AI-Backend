@@ -22,6 +22,8 @@ async def analyze_voice(
     urgent_pressure: bool = Form(False),
     asked_for_secrecy: bool = Form(False),
     asked_for_otp_or_banking: bool = Form(False),
+    new_bank_details: bool = Form(False, description="Payment request uses new or changed bank details."),
+    skip_approval: bool = Form(False, description="Caller asked to bypass the normal payment approval."),
     claims_to_be: Literal["family", "bank", "employer", "government", "police", "other"] | None = Form(None),
 ) -> VoiceAnalysisResponse:
     """Check a voice recording for signs of AI voice cloning, plus scam tactics in what was said.
@@ -35,6 +37,8 @@ async def analyze_voice(
         urgent_pressure=urgent_pressure,
         asked_for_secrecy=asked_for_secrecy,
         asked_for_otp_or_banking=asked_for_otp_or_banking,
+        new_bank_details=new_bank_details,
+        skip_approval=skip_approval,
         claims_to_be=claims_to_be,
     )
     try:
